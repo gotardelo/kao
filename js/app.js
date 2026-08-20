@@ -1293,6 +1293,7 @@
   function instrucoesDeVoz() {
     var quem = apelido();
     return [
+      'Seja um coach de execucao: acolha sem enrolar, escolha a proxima acao menor possivel e acompanhe ate ela acontecer.',
       '# Esta conversa é FALADA',
       'Você está ao lado de ' + quem + ' o dia inteiro, com o microfone aberto. Tudo o que você escrever vira áudio.',
       '- Fale curto: no máximo duas ou três frases por vez, e então pare para ouvir.',
@@ -1639,8 +1640,15 @@
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
     session.ouvindo = true;
     atualizarAgenteUI('ligado', 'pode falar');
-    var abriu = Persona.Ditado.iniciar(function (texto) {
+    var finalRecebido = false;
+    var abriu = Persona.Ditado.iniciar(function (texto, jaFinalizado) {
       if (session.ativo && texto) vozParcial(texto, 'user');
+      if (session.ativo && jaFinalizado && !finalRecebido) {
+        finalRecebido = true;
+        session.ouvindo = false;
+        atualizarAgenteUI('ligado', 'entendi, pensando');
+        Persona.Ditado.parar();
+      }
     }, function (texto, erroMsg) {
       session.ouvindo = false;
       if (!session.ativo || session.mudo) return;
