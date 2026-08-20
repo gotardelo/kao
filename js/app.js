@@ -172,6 +172,8 @@
     });
     Store.ApiKey.load(user.id, 'openai').then(function (key) {
       State.openaiVoiceKey = key || '';
+      var campo = $('#openai-voice-key');
+      if (campo) campo.value = State.openaiVoiceKey;
     });
 
     var last = Store.Convs.all(user.id)[0];
@@ -1603,13 +1605,19 @@
   }
 
   function suporteAgenteNavegador() {
-    if (!Persona.Ditado.disponivel()) {
-      return { ok: false, motivo: 'O agente por voz precisa do ditado do navegador em HTTPS. Use Chrome ou Edge atualizado.' };
+    var temCapturaNeural = capturaNeuralDisponivel();
+    if (!temCapturaNeural && !Persona.Ditado.disponivel()) {
+      return { ok: false, motivo: 'Nao encontrei uma forma de ouvir neste navegador. Use Chrome ou Edge atualizado em HTTPS.' };
     }
-    if (!Persona.Voice.disponivel()) {
+    if (!State.openaiVoiceKey && !Persona.Voice.disponivel()) {
       return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
     }
     return { ok: true, motivo: '' };
+  }
+
+  function capturaNeuralDisponivel() {
+    return !!(State.openaiVoiceKey && window.isSecureContext && navigator.mediaDevices &&
+      navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   }
 
   function falarNatural(texto, aoTerminar) {
@@ -1681,11 +1689,140 @@
     streamReply();
   }
 
-  function iniciarEscutaDoNavegador() {
+  function liberarCaptura(captura) {
+    if (!captura) return;
+    if (captura.quadro) cancelAnimationFrame(captura.quadro);
+    if (captura.contexto) captura.contexto.close().catch(function () {});
+    if (captura.stream) captura.stream.getTracks().forEach(function (track) { track.stop(); });
+  }
+
+  function pararCapturaNeural(session, enviar) {
+    var captura = session && session.captura;
+    if (!captura || captura.parando) return;
+    captura.parando = true;
+    captura.enviar = !!enviar;
+    if (captura.quadro) cancelAnimationFrame(captura.quadro);
+    if (captura.recorder && captura.recorder.state !== 'inactive') {
+      try { captura.recorder.stop(); return; } catch (_) {}
+    }
+    liberarCaptura(captura);
+    if (session.captura === captura) session.captura = null;
+  }
+
+  function transcreverAudio(blob) {
+    var dados = new FormData();
+    dados.append('file', blob, 'fala.webm');
+    dados.append('apiKey', State.openaiVoiceKey);
+    dados.append('language', 'pt');
+    return fetch('/api/transcribe', { method: 'POST', body: dados }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao foi possivel transcrever o audio.');
+        return String(body.text || '').trim();
+      });
+    });
+  }
+
+  function iniciarEscutaNeural() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
+    session.ouvindo = true;
+    atualizarAgenteUI('ligado', 'ouvindo');
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    }).then(function (stream) {
+      if (!session.ativo || session.mudo || session.ocupado) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return;
+      }
+      var tipos = ['audio/webm;codecs=opus', 'audio/webm'];
+      var tipo = tipos.filter(function (item) { return MediaRecorder.isTypeSupported(item); })[0];
+      var recorder = tipo ? new MediaRecorder(stream, { mimeType: tipo }) : new MediaRecorder(stream);
+      var contexto = new (window.AudioContext || window.webkitAudioContext)();
+      var fonte = contexto.createMediaStreamSource(stream);
+      var analisador = contexto.createAnalyser();
+      analisador.fftSize = 1024;
+      fonte.connect(analisador);
+      var captura = {
+        stream: stream, recorder: recorder, contexto: contexto, analisador: analisador,
+        partes: [], detectouFala: false, ultimoSom: Date.now(), inicio: Date.now(),
+        parando: false, enviar: false, quadro: 0
+      };
+      session.captura = captura;
+      recorder.ondataavailable = function (evento) {
+        if (evento.data && evento.data.size) captura.partes.push(evento.data);
+      };
+      recorder.onstop = function () {
+        liberarCaptura(captura);
+        if (session.captura === captura) session.captura = null;
+        session.ouvindo = false;
+        if (!session.ativo || session.mudo || !captura.enviar || !captura.detectouFala) {
+          if (session.ativo && !session.mudo && !session.ocupado) setTimeout(iniciarEscutaDoNavegador, 250);
+          return;
+        }
+        var audio = new Blob(captura.partes, { type: recorder.mimeType || 'audio/webm' });
+        if (audio.size < 1200) {
+          setTimeout(iniciarEscutaDoNavegador, 250);
+          return;
+        }
+        session.ocupado = true;
+        atualizarAgenteUI('ligado', 'entendendo voce');
+        transcreverAudio(audio).then(function (texto) {
+          if (!session.ativo) return;
+          if (!texto) {
+            session.ocupado = false;
+            setTimeout(iniciarEscutaDoNavegador, 250);
+            return;
+          }
+          enviarFalaDoNavegador(texto);
+        }).catch(function (erro) {
+          if (!session.ativo) return;
+          session.ocupado = false;
+          session.neuralIndisponivel = true;
+          toast((erro && erro.message) || 'A transcricao nao respondeu. Vou usar o ditado do navegador.', 'bad');
+          setTimeout(iniciarEscutaDoNavegador, 250);
+        });
+      };
+      recorder.start(200);
+      contexto.resume().catch(function () {});
+      var dados = new Uint8Array(analisador.fftSize);
+      function monitorar() {
+        if (!session.ativo || session.mudo || session.captura !== captura || captura.parando) return;
+        analisador.getByteTimeDomainData(dados);
+        var soma = 0;
+        for (var i = 0; i < dados.length; i++) {
+          var valor = (dados[i] - 128) / 128;
+          soma += valor * valor;
+        }
+        var volume = Math.sqrt(soma / dados.length);
+        var agora = Date.now();
+        if (volume > 0.018) {
+          captura.detectouFala = true;
+          captura.ultimoSom = agora;
+        }
+        if ((!captura.detectouFala && agora - captura.inicio > 10000) ||
+            (captura.detectouFala && agora - captura.ultimoSom > 1100) ||
+            agora - captura.inicio > 30000) {
+          pararCapturaNeural(session, captura.detectouFala);
+          return;
+        }
+        captura.quadro = requestAnimationFrame(monitorar);
+      }
+      monitorar();
+    }).catch(function (erro) {
+      if (!session.ativo || session.mudo) return;
+      session.ouvindo = false;
+      session.neuralIndisponivel = true;
+      var bloqueado = erro && (erro.name === 'NotAllowedError' || erro.name === 'SecurityError');
+      toast(bloqueado ? 'O microfone esta bloqueado. Libere no cadeado da barra de endereco.' : 'Nao consegui abrir o microfone. Vou tentar o ditado do navegador.', 'bad');
+      setTimeout(iniciarEscutaDoNavegador, 250);
+    });
+  }
+
+  function iniciarEscutaPorDitado() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
     session.ouvindo = true;
-    atualizarAgenteUI('ligado', 'pode falar');
+    atualizarAgenteUI('ligado', 'ouvindo');
     var finalRecebido = false;
     var abriu = Persona.Ditado.iniciar(function (texto, jaFinalizado) {
       if (session.ativo && texto) vozParcial(texto, 'user');
@@ -1712,6 +1849,13 @@
       atualizarAgenteUI('off', 'nao consegui abrir o microfone');
       toast('Nao consegui abrir o microfone do navegador.', 'bad');
     }
+  }
+
+  function iniciarEscutaDoNavegador() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    if (capturaNeuralDisponivel() && !session.neuralIndisponivel) iniciarEscutaNeural();
+    else iniciarEscutaPorDitado();
   }
 
   function conectarVozDoNavegador(comSaudacao) {
@@ -1747,6 +1891,7 @@
     session.ativo = false;
     Persona.Ditado.parar();
     Persona.Voice.calar();
+    pararCapturaNeural(session, false);
     if (session.audio) { try { session.audio.pause(); } catch (_) {} }
     if (session.audioUrl) URL.revokeObjectURL(session.audioUrl);
     var parcial = $('#voz-parcial');
@@ -1758,7 +1903,10 @@
     var session = State.agente.navegador;
     if (!session) return false;
     session.mudo = !session.mudo;
-    if (session.mudo) Persona.Ditado.parar();
+    if (session.mudo) {
+      Persona.Ditado.parar();
+      pararCapturaNeural(session, false);
+    }
     else iniciarEscutaDoNavegador();
     atualizarAgenteUI('ligado', session.mudo ? 'microfone mudo' : 'pode falar');
     return session.mudo;
@@ -2115,6 +2263,11 @@
     }
     $('#api-key').placeholder = isClaude ? 'sk-ant-api03-...' : 'sk-proj-...';
     $('#cfg-provider').value = provider;
+    var campoVoz = $('#field-openai-voice-key');
+    var linhaVoz = $('#row-openai-voice-key');
+    if (campoVoz) campoVoz.classList.toggle('hidden', !isClaude);
+    if (linhaVoz) linhaVoz.classList.toggle('hidden', !isClaude);
+    if ($('#openai-voice-key')) $('#openai-voice-key').value = State.openaiVoiceKey || '';
     ['#cfg-voz-realtime', '#cfg-voz-modelo'].forEach(function (sel) {
       var input = $(sel);
       if (input) input.disabled = isClaude;
@@ -2264,6 +2417,42 @@
       $('#key-result').className = 'test-result';
       setKeyStatus('none');
       toast('Chave removida.');
+    });
+
+    $('#btn-save-openai-voice-key').addEventListener('click', function () {
+      var key = $('#openai-voice-key').value.trim();
+      var out = $('#openai-voice-key-result');
+      if (!/^sk-/.test(key)) {
+        out.className = 'test-result show bad';
+        out.textContent = 'A chave OpenAI deve comecar com "sk-".';
+        return;
+      }
+      var btn = $('#btn-save-openai-voice-key');
+      btn.disabled = true;
+      Store.ApiKey.save(State.user.id, 'openai', key).then(function () {
+        State.openaiVoiceKey = key;
+        out.className = 'test-result show ok';
+        out.textContent = 'Chave de voz salva. O proximo agente vai ouvir pelo microfone neural.';
+        toast('Chave de voz salva.', 'ok');
+      }).catch(function (erro) {
+        out.className = 'test-result show bad';
+        out.textContent = (erro && erro.message) || 'Nao foi possivel salvar a chave.';
+      }).then(function () { btn.disabled = false; });
+    });
+
+    $('#btn-clear-openai-voice-key').addEventListener('click', function () {
+      if (!confirm('Remover a chave OpenAI usada para voz e microfone?')) return;
+      Store.ApiKey.clear(State.user.id, 'openai');
+      State.openaiVoiceKey = '';
+      $('#openai-voice-key').value = '';
+      $('#openai-voice-key-result').className = 'test-result';
+      toast('Chave de voz removida.');
+    });
+
+    $('[data-toggle-openai-voice-pass]').addEventListener('click', function () {
+      var input = $('#openai-voice-key');
+      input.type = input.type === 'password' ? 'text' : 'password';
+      this.setAttribute('aria-label', input.type === 'password' ? 'Mostrar chave da voz' : 'Esconder chave da voz');
     });
 
     $('#cfg-system-custom').addEventListener('change', function (e) {
