@@ -2,3 +2,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+dist/
+public/
+.next/
+.open-next/
+.wrangler/
+.tmp-sites-template/
