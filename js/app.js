@@ -1840,7 +1840,8 @@
       var captura = {
         stream: stream, recorder: recorder, contexto: contexto, analisador: analisador,
         partes: [], detectouFala: false, ultimoSom: Date.now(), inicio: Date.now(),
-        parando: false, enviar: false, quadro: 0
+        parando: false, enviar: false, quadro: 0, ruido: 0, amostrasRuido: 0,
+        limiar: 0.003, pico: 0, avisouSemSinal: false
       };
       session.captura = captura;
       recorder.ondataavailable = function (evento) {
@@ -1850,7 +1851,7 @@
         liberarCaptura(captura);
         if (session.captura === captura) session.captura = null;
         session.ouvindo = false;
-        if (!session.ativo || session.mudo || !captura.enviar || !captura.detectouFala) {
+        if (!session.ativo || session.mudo || !captura.enviar) {
           if (session.ativo && !session.mudo && !session.ocupado) setTimeout(iniciarEscutaDoNavegador, 250);
           return;
         }
@@ -1873,8 +1874,12 @@
           if (!session.ativo) return;
           session.ocupado = false;
           session.neuralIndisponivel = true;
-          toast((erro && erro.message) || 'A transcricao nao respondeu. Vou usar o ditado do navegador.', 'bad');
-          setTimeout(iniciarEscutaDoNavegador, 250);
+          session.ativo = false;
+          State.agente.ligado = false;
+          var mensagem = (erro && erro.message) || 'A transcricao da voz natural nao respondeu.';
+          mostrarDiagnostico(mensagem);
+          atualizarAgenteUI('off', mensagem);
+          toast(mensagem, 'bad');
         });
       };
       recorder.start(200);
@@ -1890,14 +1895,27 @@
         }
         var volume = Math.sqrt(soma / dados.length);
         var agora = Date.now();
-        if (volume > 0.018) {
+        if (volume > captura.pico) captura.pico = volume;
+        if (agora - captura.inicio < 900) {
+          captura.ruido += volume;
+          captura.amostrasRuido++;
+          if (captura.amostrasRuido > 8) {
+            captura.limiar = Math.max(0.002, Math.min(0.012, (captura.ruido / captura.amostrasRuido) * 3.2));
+          }
+        }
+        if (volume > captura.limiar) {
           captura.detectouFala = true;
           captura.ultimoSom = agora;
         }
-        if ((!captura.detectouFala && agora - captura.inicio > 10000) ||
+        if (!captura.detectouFala && agora - captura.inicio > 3500 && !captura.avisouSemSinal) {
+          captura.avisouSemSinal = true;
+          atualizarAgenteUI('ligado', 'checando sinal do microfone');
+        }
+        if ((!captura.detectouFala && agora - captura.inicio > 8000) ||
             (captura.detectouFala && agora - captura.ultimoSom > 1100) ||
             agora - captura.inicio > 30000) {
-          pararCapturaNeural(session, captura.detectouFala);
+          // A transcricao e a fonte de verdade. Nunca descarte uma fala so por volume baixo.
+          pararCapturaNeural(session, true);
           return;
         }
         captura.quadro = requestAnimationFrame(monitorar);
@@ -1908,8 +1926,14 @@
       session.ouvindo = false;
       session.neuralIndisponivel = true;
       var bloqueado = erro && (erro.name === 'NotAllowedError' || erro.name === 'SecurityError');
-      toast(bloqueado ? 'O microfone esta bloqueado. Libere no cadeado da barra de endereco.' : 'Nao consegui abrir o microfone. Vou tentar o ditado do navegador.', 'bad');
-      setTimeout(iniciarEscutaDoNavegador, 250);
+      var mensagem = bloqueado
+        ? 'O microfone esta bloqueado. Libere no cadeado da barra de endereco.'
+        : 'Nao consegui abrir o microfone para a transcricao natural.';
+      session.ativo = false;
+      State.agente.ligado = false;
+      mostrarDiagnostico(mensagem);
+      atualizarAgenteUI('off', mensagem);
+      toast(mensagem, 'bad');
     });
   }
 
@@ -2578,18 +2602,38 @@
     $('#btn-save-elevenlabs-key').addEventListener('click', function () {
       var key = $('#elevenlabs-key').value.trim();
       var out = $('#elevenlabs-result');
+      var btn = $('#btn-save-elevenlabs-key');
       if (key.length < 12) {
         out.className = 'test-result show bad';
         out.textContent = 'Cole uma chave valida da ElevenLabs.';
         return;
       }
-      Store.ApiKey.save(State.user.id, 'elevenlabs', key).then(function () {
+      btn.disabled = true;
+      out.className = 'test-result show';
+      out.textContent = 'Validando a chave de voz...';
+      fetch('/api/speech/voices', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ apiKey: key })
+      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao consegui validar a chave de voz.');
+          return Store.ApiKey.save(State.user.id, 'elevenlabs', key);
+        });
+      }).then(function () {
         State.elevenLabsKey = key;
         State.config = Store.Config.set(State.user.id, {
           elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb'
         });
         renderElevenLabsKeyUI();
-        toast('Voz natural salva. Ligue o agente para testar.', 'ok');
+        out.className = 'test-result show ok';
+        out.textContent = 'Chave de voz validada e pronta.';
+        toast('Voz natural validada. Ligue o agente para testar.', 'ok');
+      }).catch(function (erro) {
+        out.className = 'test-result show bad';
+        out.textContent = (erro && erro.message) || 'Nao consegui validar a chave de voz.';
+      }).then(function () {
+        btn.disabled = false;
       });
     });
 
