@@ -1604,6 +1604,9 @@
     if (!Persona.Ditado.disponivel()) {
       return { ok: false, motivo: 'Nao encontrei uma forma de ouvir neste navegador. Use Chrome ou Edge atualizado em HTTPS.' };
     }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return { ok: false, motivo: 'Este navegador nao permite acesso seguro ao microfone.' };
+    }
     if (!Persona.Voice.disponivel()) {
       return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
     }
@@ -1615,14 +1618,21 @@
     if (!session || !session.ativo) return;
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
-    atualizarAgenteUI('ligado', 'respondendo');
-    function continuar() {
+    atualizarAgenteUI('ligado', 'preparando resposta em voz');
+    function continuar(saiuAudio) {
       if (!session.ativo) return;
+      if (saiuAudio === false && !session.avisoVoz) {
+        session.avisoVoz = true;
+        toast('A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
+      }
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
       iniciarEscutaDoNavegador();
     }
-    var falou = Persona.Voice.falar(texto, State.persona.voz, continuar);
+    var falou = Persona.Voice.falar(texto, State.persona.voz, continuar, function (estado) {
+      if (!session.ativo) return;
+      if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
+    });
     if (!falou) continuar();
   }
 
@@ -1767,8 +1777,8 @@
   function iniciarEscutaPorDitado() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
-    session.ouvindo = true;
-    atualizarAgenteUI('ligado', 'ouvindo');
+    session.ouvindo = false;
+    atualizarAgenteUI('conectando', 'abrindo microfone');
     var finalRecebido = false;
     var abriu = Persona.Ditado.iniciar(function (texto, jaFinalizado) {
       if (session.ativo && texto) vozParcial(texto, 'user');
@@ -1788,6 +1798,14 @@
       }
       if (erroMsg && !/ouvi nada/i.test(erroMsg)) toast(erroMsg, 'bad');
       setTimeout(iniciarEscutaDoNavegador, 250);
+    }, function (estado) {
+      if (!session.ativo) return;
+      if (estado === 'started') {
+        session.ouvindo = true;
+        atualizarAgenteUI('ligado', 'ouvindo');
+      } else if (estado === 'speechstart') {
+        atualizarAgenteUI('ligado', 'te ouvindo');
+      }
     });
     if (!abriu) {
       session.ativo = false;
@@ -1801,6 +1819,31 @@
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
     iniciarEscutaPorDitado();
+  }
+
+  function confirmarMicrofoneDoNavegador(session) {
+    return navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    }).then(function (stream) {
+      var temAudio = stream.getAudioTracks().some(function (track) { return track.readyState === 'live'; });
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      if (!temAudio) throw new Error('Nenhum microfone ativo foi encontrado.');
+      if (!session.ativo) throw new Error('A ativacao do agente foi cancelada.');
+      session.microfoneConfirmado = true;
+    });
+  }
+
+  function tratarFalhaMicrofoneDoNavegador(session, erro) {
+    if (!session || !session.ativo) return;
+    session.ativo = false;
+    State.agente.ligado = false;
+    var bloqueado = erro && (erro.name === 'NotAllowedError' || erro.name === 'SecurityError');
+    var mensagem = bloqueado
+      ? 'O microfone esta bloqueado. Libere no cadeado da barra de endereco e ligue o agente de novo.'
+      : ((erro && erro.message) || 'Nao consegui confirmar um microfone ativo neste aparelho.');
+    mostrarDiagnostico(mensagem);
+    atualizarAgenteUI('off', mensagem);
+    toast(mensagem, 'bad');
   }
 
   function conectarVozDoNavegador(comSaudacao) {
@@ -1817,17 +1860,25 @@
       ocupado: false,
       mudo: false,
       inicioEm: Date.now(),
-      ultimaFalaEm: Date.now()
+      ultimaFalaEm: Date.now(),
+      microfoneConfirmado: false,
+      avisoVoz: false
     };
+    var session = State.agente.navegador;
     State.agente.descansando = false;
     limparDiagnostico();
-    atualizarAgenteUI('ligado', 'preparando o microfone');
-    if (comSaudacao !== false) {
-      State.agente.navegador.ocupado = true;
-      falarDoNavegador('Oi, ' + apelido() + '. Estou aqui com voce. Qual e a unica coisa que importa agora?');
-    } else {
-      iniciarEscutaDoNavegador();
-    }
+    atualizarAgenteUI('conectando', 'pedindo acesso ao microfone');
+    confirmarMicrofoneDoNavegador(session).then(function () {
+      if (!session.ativo || State.agente.navegador !== session) return;
+      if (comSaudacao !== false) {
+        session.ocupado = true;
+        falarDoNavegador('Oi, ' + apelido() + '. Estou aqui com voce. Qual e a unica coisa que importa agora?');
+      } else {
+        iniciarEscutaDoNavegador();
+      }
+    }).catch(function (erro) {
+      tratarFalhaMicrofoneDoNavegador(session, erro);
+    });
   }
 
   function encerrarVozDoNavegador() {

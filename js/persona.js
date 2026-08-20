@@ -311,11 +311,10 @@
         .trim();
     },
 
-    falar: function (texto, voz, aoTerminar) {
+    falar: function (texto, voz, aoTerminar, aoEstado) {
       if (!Voice.disponivel()) return false;
       var limpo = Voice.limpar(texto);
       if (!limpo) return false;
-      speechSynthesis.cancel();
       var u = new SpeechSynthesisUtterance(limpo.slice(0, 4000));
       var cfg = voz || {};
       if (cfg.uri) {
@@ -331,8 +330,43 @@
       if (!u.voice) u.lang = 'pt-BR';
       u.rate = cfg.rate || 1;
       u.pitch = typeof cfg.pitch === 'number' ? cfg.pitch : 1;
-      if (aoTerminar) { u.onend = aoTerminar; u.onerror = aoTerminar; }
-      speechSynthesis.speak(u);
+      var iniciou = false;
+      var terminou = false;
+      var vigia = null;
+
+      function terminar(saiuAudio) {
+        if (terminou) return;
+        terminou = true;
+        if (vigia) clearTimeout(vigia);
+        if (aoTerminar) aoTerminar(saiuAudio);
+      }
+
+      u.onstart = function () {
+        iniciou = true;
+        if (vigia) clearTimeout(vigia);
+        if (aoEstado) aoEstado('started');
+      };
+      u.onend = function () { terminar(true); };
+      u.onerror = function (evento) {
+        if (aoEstado) aoEstado('error', (evento && evento.error) || 'synthesis-failed');
+        terminar(false);
+      };
+
+      try {
+        speechSynthesis.cancel();
+        speechSynthesis.resume();
+        speechSynthesis.speak(u);
+      } catch (e) {
+        return false;
+      }
+
+      // Chrome can accept speak() without ever starting audible output.
+      vigia = setTimeout(function () {
+        if (!iniciou && !speechSynthesis.speaking) {
+          if (aoEstado) aoEstado('error', 'speech-not-started');
+          terminar(false);
+        }
+      }, 1800);
       return true;
     },
 
@@ -366,7 +400,7 @@
      * @param {function} aoFim    (jaFinalizado, mensagemDeErro)
      * @returns {boolean} conseguiu começar
      */
-    iniciar: function (aoTexto, aoFim) {
+    iniciar: function (aoTexto, aoFim, aoEstado) {
       if (!Ditado.disponivel()) return false;
       if (Ditado._rec) Ditado.parar();          // nunca dois ao mesmo tempo
 
@@ -386,10 +420,16 @@
         if (encerrado) return;
         encerrado = true;
         Ditado._rec = null;
-        try { rec.onresult = rec.onend = rec.onerror = null; } catch (_) {}
+        try {
+          rec.onresult = rec.onend = rec.onerror = null;
+          rec.onstart = rec.onspeechstart = rec.onspeechend = null;
+        } catch (_) {}
         if (aoFim) aoFim(finalizado, erroMsg);
       }
 
+      rec.onstart = function () { if (aoEstado) aoEstado('started'); };
+      rec.onspeechstart = function () { if (aoEstado) aoEstado('speechstart'); };
+      rec.onspeechend = function () { if (aoEstado) aoEstado('speechend'); };
       rec.onresult = function (e) {
         var parcial = '';
         for (var i = e.resultIndex; i < e.results.length; i++) {
