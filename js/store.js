@@ -171,7 +171,7 @@
     model: 'gpt-5.6-terra',
     effort: 'high',
     vozRealtime: 'marin',
-    agenteAtivo: true,        // ele já entra falando; desligar é escolha sua
+    agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar
     vozOciosoMin: 0,          // 0 = nunca descansa sozinho
     vozModelo: 'gpt-realtime-2.1',
     maxTokens: 8000,
