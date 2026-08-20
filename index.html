@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
-<meta name="theme-color" content="#0b0d12">
-<meta name="description" content="Kao — seu copiloto pessoal com IA, disponível 24h no navegador.">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="TDAHZEI — seu copiloto pessoal com IA, disponível 24h no navegador.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Kao">
+<meta name="apple-mobile-web-app-title" content="TDAHZEI">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon.svg">
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/persona.css">
 <link rel="stylesheet" href="css/vida.css">
-<title>Kao · Copiloto</title>
+<title>TDAHZEI · Copiloto</title>
 </head>
 <body>
 
 <!-- ============ SPLASH ============ -->
 <div id="splash" class="splash">
-  <div class="logo-mark xl">K</div>
+  <div class="logo-mark xl">T</div>
   <div class="splash-bar"><span></span></div>
 </div>
 
@@ -28,11 +28,11 @@
 <main id="view-auth" class="auth hidden">
   <div class="auth-aside">
     <div class="auth-brand">
-      <div class="logo-mark">K</div>
-      <span>Kao</span>
+      <div class="logo-mark">T</div>
+      <span>TDAHZEI</span>
     </div>
     <h1>Seu copiloto<br><em>disponível 24h</em>.</h1>
-    <p>Converse, planeje e execute com a inteligência da Anthropic — direto do navegador, no celular ou no desktop. Sua chave, seus dados, seu ritmo.</p>
+    <p>Converse por texto ou voz com a OpenAI — direto no navegador, no celular ou no desktop. Sua chave, seus dados, seu ritmo.</p>
     <ul class="auth-points">
       <li><i data-ico="lock"></i><div><strong>Chave criptografada</strong><span>AES-GCM com chave não-exportável no seu dispositivo.</span></div></li>
       <li><i data-ico="bolt"></i><div><strong>Respostas em tempo real</strong><span>Streaming token a token, sem espera.</span></div></li>
@@ -109,8 +109,8 @@
   <aside class="sidebar" id="sidebar">
     <div class="side-head">
       <div class="auth-brand">
-        <div class="logo-mark">K</div>
-        <span>Kao</span>
+        <div class="logo-mark">T</div>
+        <span>TDAHZEI</span>
       </div>
       <button class="icon-btn only-mobile" data-close-drawer aria-label="Fechar menu"><i data-ico="x"></i></button>
     </div>
@@ -142,6 +142,16 @@
       <button class="icon-btn only-mobile" data-open-drawer aria-label="Abrir menu"><i data-ico="menu"></i></button>
       <h2 id="page-title">Painel</h2>
       <div class="spacer"></div>
+      <button class="agente-btn" id="btn-agente" type="button" aria-pressed="false" title="Ligar ou desligar a conversa por voz">
+        <span class="agente-eq" id="agente-eq" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span class="agente-info">
+          <b id="agente-label">Ativar agente</b>
+          <small id="agente-sub">voz desligada</small>
+        </span>
+        <span class="agente-switch" aria-hidden="true"><em></em></span>
+      </button>
       <button class="avatar" data-nav="profile" id="topbar-avatar">K</button>
     </header>
 
@@ -157,6 +167,7 @@
           <button class="btn btn-primary" data-nav="chat"><i data-ico="bolt"></i> Conversar agora</button>
         </div>
 
+        <div class="progress-panel" id="progress-panel"></div>
         <div id="briefing"></div>
         <div id="teto-api"></div>
 
@@ -209,15 +220,27 @@
     <section class="page" id="page-chat">
       <div class="chat">
         <div class="chat-scroll" id="chat-scroll">
+          <div class="copilot-panel" id="copilot-panel">
+            <div class="copilot-orb" aria-hidden="true"><span></span></div>
+            <div class="copilot-copy">
+              <b id="copilot-title">Voz ao vivo desligada</b>
+              <small id="copilot-status">Ligue e fale normalmente: ele responde falando e anota tudo sozinho.</small>
+            </div>
+            <div class="copilot-acoes">
+              <button class="btn btn-ghost btn-sm" id="btn-copilot-mudo" type="button" hidden><i data-ico="mic"></i> Mudo</button>
+              <button class="btn btn-primary btn-sm" id="btn-copilot" type="button"><i data-ico="mic"></i> Ligar voz</button>
+            </div>
+          </div>
+          <div class="copilot-diag" id="copilot-diag" hidden></div>
           <div class="chat-empty" id="chat-empty">
-            <div id="chat-empty-ava"><div class="logo-mark xl">K</div></div>
-            <h3>Como posso ajudar hoje?</h3>
-            <p class="muted">Pergunte qualquer coisa — eu mantenho o contexto da conversa.</p>
+            <div id="chat-empty-ava"><div class="logo-mark xl">T</div></div>
+            <h3>Por onde a gente começa?</h3>
+            <p class="muted">Fala do jeito que der — bagunçado serve. Eu organizo, anoto e devolvo um passo só.</p>
             <div class="chips">
-              <button class="chip" data-prompt="Resuma o que eu preciso saber para começar bem o dia.">Resumir meu dia</button>
-              <button class="chip" data-prompt="Vamos fazer um brainstorm. Tema: ">Brainstorm</button>
-              <button class="chip" data-prompt="Escreva um e-mail profissional e direto sobre: ">Escrever e-mail</button>
-              <button class="chip" data-prompt="Me ensine passo a passo: ">Aprender algo</button>
+              <button class="chip" data-ritual="manha">Bom dia — o que importa hoje</button>
+              <button class="chip" data-ritual="travei">Travei — me tira daqui</button>
+              <button class="chip" data-ritual="noite">Fechamento — como foi o dia</button>
+              <button class="chip" data-ritual="dinheiro">Grana — como estou este mês</button>
             </div>
           </div>
           <div id="messages"></div>
@@ -227,6 +250,7 @@
           <div class="composer-meta">
             <select id="model-quick" class="mini-select" title="Modelo"></select>
             <span class="ctx" id="ctx-info"></span>
+            <button class="btn btn-ghost btn-sm" id="btn-copilot-mini" type="button"><i data-ico="mic"></i> Voz</button>
             <button class="btn btn-ghost btn-sm" id="btn-stop" hidden><i data-ico="stop"></i> Parar</button>
           </div>
           <form class="composer" id="composer">
@@ -244,12 +268,12 @@
       <div class="page-inner narrow">
         <div class="card">
           <div class="card-head">
-            <h4>Chave da API Anthropic</h4>
+            <h4>Chave da API OpenAI</h4>
             <span class="badge" id="key-badge">Não configurada</span>
           </div>
-          <p class="muted small">Cole sua chave (<code>sk-ant-…</code>) gerada em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Ela é criptografada com AES-GCM por uma chave que nunca sai deste dispositivo, e só é enviada para a própria API da Anthropic.</p>
+          <p class="muted small">Cole sua chave (<code>sk-…</code>) gerada na <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">plataforma da OpenAI</a>. Ela é criptografada com AES-GCM por uma chave que nunca sai deste dispositivo e é enviada apenas ao servidor local do TDAHZEI para chamar a OpenAI.</p>
           <div class="input-wrap">
-            <input type="password" id="api-key" placeholder="sk-ant-api03-..." autocomplete="off" spellcheck="false">
+            <input type="password" id="api-key" placeholder="sk-proj-..." autocomplete="off" spellcheck="false">
             <button type="button" class="eye" data-toggle-pass aria-label="Mostrar chave"><i data-ico="eye"></i></button>
           </div>
           <div class="row-btns">
@@ -282,7 +306,36 @@
           </label>
           <label class="check">
             <input type="checkbox" id="cfg-thinking" checked>
-            <span>Mostrar o raciocínio do modelo antes da resposta</span>
+            <span>Mostrar detalhes de execução quando disponíveis</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cfg-agente-auto" checked>
+            <span>Ligar o agente de voz sozinho quando eu entrar</span>
+          </label>
+          <label class="field">
+            <span>Voz dele</span>
+            <select id="cfg-voz-realtime"></select>
+            <small class="hint">É a voz do agente ao vivo (API Realtime da OpenAI). Diferente da leitura
+              em voz alta das respostas escritas, que usa a voz do próprio navegador.</small>
+          </label>
+          <label class="field">
+            <span>Modelo de voz</span>
+            <select id="cfg-voz-modelo">
+              <option value="gpt-realtime-2.1">Realtime 2.1 — melhor conversa (US$ 32/64 por 1M de áudio)</option>
+              <option value="gpt-realtime-2.1-mini">Realtime 2.1 mini — 3× mais barato (US$ 10/20)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Descansar sozinho depois de</span>
+            <select id="cfg-voz-ocioso">
+              <option value="0">Nunca — fica ligado enquanto o app estiver aberto</option>
+              <option value="10">10 minutos em silêncio</option>
+              <option value="30">30 minutos em silêncio</option>
+              <option value="60">1 hora em silêncio</option>
+            </select>
+            <small class="hint">O microfone aberto é cobrado por minuto mesmo quando ninguém fala —
+              cerca de <b>US$ 1,50 por hora</b> só ouvindo, no Realtime 2.1. O descanso desliga a
+              sessão depois de um tempo sem conversa; um clique no botão do agente religa.</small>
           </label>
           <label class="check">
             <input type="checkbox" id="cfg-ferramentas" checked>
@@ -292,7 +345,7 @@
             <span>Teto de gasto com a API por mês (US$)</span>
             <input type="number" id="cfg-teto" min="0" step="1" placeholder="0 = sem limite">
             <small class="hint">Ao atingir esse valor, o app para de enviar mensagens até você aumentar
-              o teto ou virar o mês. A cobrança real é a do console da Anthropic — isto é uma estimativa
+              o teto ou virar o mês. A cobrança real é a da plataforma da OpenAI — isto é uma estimativa
               baseada nos tokens usados.</small>
           </label>
           <label class="check">
@@ -374,6 +427,7 @@
     <section class="page" id="page-profile">
       <div class="page-inner narrow">
         <div class="perfil-social" id="perfil-social"></div>
+        <div class="card" id="card-avatar"></div>
 
         <div class="card">
           <div class="card-head"><h4>Dados da conta</h4></div>
@@ -436,12 +490,14 @@
 <script src="js/icons.js"></script>
 <script src="js/markdown.js"></script>
 <script src="js/persona.js"></script>
+<script src="js/avatar.js"></script>
 <script src="js/store.js"></script>
 <script src="js/memoria.js"></script>
 <script src="js/financas.js"></script>
 <script src="js/ferramentas.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/claude.js"></script>
+<script src="js/voz.js"></script>
 <script src="js/wizard.js"></script>
 <script src="js/vida.js"></script>
 <script src="js/app.js"></script>

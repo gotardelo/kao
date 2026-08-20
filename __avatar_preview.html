@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<title>prévia do avatar</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body{overflow:auto;padding:30px;background:#000}
+  .grade{display:grid;grid-template-columns:repeat(6,1fr);gap:18px;max-width:1180px}
+  .item{text-align:center}
+  .item small{display:block;margin-top:8px;font-size:11.5px;color:#86868b;font-family:var(--mono)}
+  h4{margin:26px 0 14px;font-size:15px;font-weight:600}
+</style>
+</head><body>
+<h4>Variações</h4>
+<div class="grade" id="grade"></div>
+<h4>Tamanhos</h4>
+<div style="display:flex;align-items:flex-end;gap:18px" id="tamanhos"></div>
+<h4>Skins por nível</h4>
+<div class="grade" id="skins"></div>
+
+<script src="js/store.js"></script>
+<script src="js/avatar.js"></script>
+<script>
+var casos = [
+  ['padrão', {}],
+  ['negra, crespo, óculos', { pele:'negra', cabelo:'crespo', cabeloCor:'preto', oculos:'quadrado' }],
+  ['clara, loira longa', { pele:'clara', cabelo:'longo', cabeloCor:'loiro', olhos:'azul', roupa:'camisa' }],
+  ['barba cheia + fone', { pele:'media', cabelo:'curto', barba:'cheia', acessorios:['fone'] }],
+  ['careca + cavanhaque', { pele:'oliva', cabelo:'careca', barba:'cavanhaque', roupa:'moletom' }],
+  ['coque + brinco', { pele:'morena', cabelo:'coque', cabeloCor:'preto', acessorios:['brinco'] }],
+  ['cacheado ruivo', { pele:'clara', cabelo:'cacheado', cabeloCor:'ruivo', olhos:'verde', expressao:'sorriso' }],
+  ['grisalho + terno', { pele:'clara', cabelo:'medio', cabeloCor:'grisalho', roupa:'terno', barba:'curta' }],
+  ['jaleco + gato', { pele:'media', cabelo:'coque', roupa:'jaleco', companhia:'gato' }],
+  ['moletom + café', { pele:'media', cabelo:'medio', roupa:'moletom', objeto:'cafe', expressao:'cansado' }],
+  ['boné + cachorro', { pele:'morena', cabelo:'raspado', acessorios:['bone'], companhia:'cachorro' }],
+  ['foco + notebook', { pele:'clara', cabelo:'curto', expressao:'foco', objeto:'notebook', oculos:'redondo' }],
+  ['colorido + planta', { pele:'clara', cabelo:'cacheado', cabeloCor:'colorido', companhia:'planta' }],
+  ['regata + relógio', { pele:'negra', cabelo:'raspado', roupa:'regata', acessorios:['relogio','tatuagem'] }],
+  ['violão', { pele:'media', cabelo:'longo', cabeloCor:'preto', objeto:'violao', barba:'curta' }],
+  ['remédio', { pele:'clara', cabelo:'medio', objeto:'remedio', expressao:'cansado' }],
+  ['livro + óculos', { pele:'oliva', cabelo:'coque', oculos:'quadrado', objeto:'livro' }],
+  ['tudo junto', { pele:'morena', cabelo:'cacheado', cabeloCor:'preto', oculos:'redondo', barba:'curta',
+                   roupa:'moletom', acessorios:['fone','brinco'], companhia:'gato', objeto:'cafe', expressao:'sorriso' }]
+];
+
+var g = document.getElementById('grade');
+casos.forEach(function (c) {
+  var d = document.createElement('div');
+  d.className = 'item';
+  d.innerHTML = Avatar.svg(c[1], 150) + '<small>' + c[0] + '</small>';
+  g.appendChild(d);
+});
+
+var t = document.getElementById('tamanhos');
+[32, 44, 64, 96, 150, 220].forEach(function (n) {
+  var d = document.createElement('div');
+  d.className = 'item';
+  d.innerHTML = Avatar.svg({ pele:'media', cabelo:'cacheado', oculos:'quadrado', barba:'curta' }, n) +
+                '<small>' + n + 'px</small>';
+  t.appendChild(d);
+});
+
+var s = document.getElementById('skins');
+Avatar.SKINS.forEach(function (sk) {
+  var d = document.createElement('div');
+  d.className = 'item';
+  d.innerHTML = Avatar.svg({ pele:'media', cabelo:'curto', skin:sk.id }, 150) +
+                '<small>' + sk.nome + ' · nível ' + sk.nivel + '</small>';
+  s.appendChild(d);
+});
+</script>
+</body></html>

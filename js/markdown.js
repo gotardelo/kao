@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — markdown mínimo e seguro
+   TDAHZEI — markdown mínimo e seguro
    Regra de ouro: escapa o HTML PRIMEIRO, formata depois.
    Nada do que o modelo devolve vira HTML executável.
    ============================================================ */

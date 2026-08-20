@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>TDAHZEI — teste do agente</title></head>
+<body>
+<pre id="out">rodando…</pre>
+<iframe id="app" src="index.html" style="width:1200px;height:800px;border:1px solid #333"></iframe>
+<script>
+/* Sobe o app do zero, cria conta e personagem, salva a chave e confere que
+   o AGENTE liga sozinho: pede microfone, pede a chave efêmera e troca SDP.
+   O fetch é falsificado no ponto do proxy, então nada sai para a OpenAI. */
+var results = [];
+function ok(name, cond, extra) { results.push((cond ? 'PASS ' : 'FAIL ') + name + (cond ? '' : '  << ' + (extra || ''))); }
+
+localStorage.clear();
+
+var chamadas = [];
+var SSE = [
+  'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"oi"}}]}', '',
+  'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}', '',
+  'data: [DONE]', ''
+].join('\n');
+
+function stubFetch(win) {
+  win.fetch = function (url, opts) {
+    var u = String(url);
+    var corpo = {};
+    try { corpo = JSON.parse(opts.body); } catch (e) {}
+    chamadas.push({ url: u, corpo: corpo });
+
+    if (u.indexOf('/api/openai/test') > -1) {
+      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true }); } });
+    }
+    if (u.indexOf('/api/openai/realtime-token') > -1) {
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: function () { return Promise.resolve({ value: 'ek_de_mentira', model: 'gpt-realtime-2.1' }); }
+      });
+    }
+    if (u.indexOf('/api/openai/realtime-sdp') > -1) {
+      // SDP de resposta inválido de propósito: queremos ver o app tratar isso
+      return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve('NAO_E_SDP'); } });
+    }
+    var sent = false;
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: function () { return Promise.resolve({}); },
+      body: { getReader: function () { return { read: function () {
+        if (sent) return Promise.resolve({ done: true });
+        sent = true;
+        return Promise.resolve({ done: false, value: new TextEncoder().encode(SSE) });
+      } }; } }
+    });
+  };
+}
+
+var errosApp = [];
+function espiar(win) {
+  win.addEventListener('error', function (e) { errosApp.push(e.message); });
+  win.addEventListener('unhandledrejection', function (e) { errosApp.push('rejeição: ' + e.reason); });
+}
+
+function waitFor(fn, desc, ms) {
+  return new Promise(function (resolve, reject) {
+    var t0 = Date.now();
+    (function tick() {
+      var v; try { v = fn(); } catch (e) { v = null; }
+      if (v) return resolve(v);
+      if (Date.now() - t0 > (ms || 12000)) return reject(new Error('timeout: ' + desc));
+      setTimeout(tick, 60);
+    })();
+  });
+}
+function esperar(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+var frame = document.getElementById('app'), win, doc;
+
+frame.addEventListener('load', function () {
+  win = frame.contentWindow; doc = frame.contentDocument;
+  stubFetch(win); espiar(win);
+
+  waitFor(function () { return win.Auth && win.Voz && !doc.getElementById('view-auth').classList.contains('hidden'); }, 'login')
+    .then(function () {
+      ok('js/voz.js carregou', !!win.Voz);
+      ok('agente começa desligado', win.Voz.estado() === 'off', win.Voz.estado());
+      ok('botão do agente existe na barra do topo', !!doc.getElementById('btn-agente'));
+      ok('suporte a voz neste navegador', win.Voz.suporte().ok, win.Voz.suporte().motivo);
+
+      doc.querySelector('.tab[data-tab="signup"]').click();
+      var f = doc.getElementById('form-signup');
+      f.name.value = 'Guilherme Teste';
+      f.email.value = 'g@teste.com';
+      f.password.value = 'MinhaSenha!2026';
+      f.password2.value = 'MinhaSenha!2026';
+      f.querySelector('button[type="submit"]').click();
+      return waitFor(function () { return !doc.getElementById('view-app').classList.contains('hidden'); }, 'app');
+    })
+    .then(function () {
+      /* passa o criador de personagem no mínimo necessário */
+      var next = doc.getElementById('wz-next');
+      next.click();                                    // boas-vindas -> você
+      doc.getElementById('wz-apelido').value = 'Gui';
+      doc.getElementById('wz-apelido').dispatchEvent(new win.Event('input'));
+      next.click();                                    // você -> travas
+      next.click();                                    // travas -> classe
+      doc.querySelectorAll('.classe')[0].click();
+      next.click();                                    // classe -> identidade
+      doc.getElementById('wz-nome').value = 'Rex';
+      doc.getElementById('wz-nome').dispatchEvent(new win.Event('input'));
+      next.click();                                    // identidade -> atributos
+      next.click();                                    // atributos -> voz
+      next.click();                                    // voz -> final
+      next.click();                                    // conclui
+      return waitFor(function () { return doc.getElementById('view-wizard').classList.contains('hidden'); }, 'criador fecha');
+    })
+    .then(function () {
+      ok('agente NÃO liga antes da chave', !win.Voz.ativo(), win.Voz.estado());
+
+      /* salva a chave: é aqui que ele deve entrar sozinho */
+      doc.getElementById('api-key').value = 'sk-proj-fake-para-teste';
+      doc.getElementById('btn-save-key').click();
+      return waitFor(function () { return doc.getElementById('key-badge').textContent === 'Conectada'; }, 'chave validada');
+    })
+    .then(function () {
+      return waitFor(function () { return win.Voz.estado() !== 'off'; }, 'agente liga sozinho depois da chave');
+    })
+    .then(function () {
+      ok('agente liga sozinho assim que tem chave', true);
+      return waitFor(function () {
+        return chamadas.filter(function (c) { return c.url.indexOf('realtime-token') > -1; })[0];
+      }, 'pedido da chave efêmera');
+    })
+    .then(function (chamada) {
+      ok('pediu a chave efêmera ao proxy local', true);
+      var c = chamada.corpo;
+      ok('mandou a chave da API', c.apiKey === 'sk-proj-fake-para-teste', c.apiKey);
+      ok('mandou o modelo de voz', c.model === 'gpt-realtime-2.1', c.model);
+      ok('mandou a voz escolhida', c.voice === 'marin', c.voice);
+      ok('mandou as 13 ferramentas', Array.isArray(c.tools) && c.tools.length === 13, c.tools && c.tools.length);
+      ok('ferramenta no formato plano do realtime',
+         c.tools[0].type === 'function' && !!c.tools[0].name && !c.tools[0].function, JSON.stringify(c.tools[0]).slice(0, 90));
+      ok('instruções levam o nome do personagem', /Rex/.test(c.instructions), c.instructions.slice(0, 80));
+      ok('instruções levam o apelido', /Gui/.test(c.instructions));
+      ok('instruções mandam falar curto', /Fale curto/.test(c.instructions));
+      ok('instruções proíbem markdown na fala', /Nada de markdown/.test(c.instructions));
+      ok('instruções trazem as regras de TDAH', /O difícil é começar/.test(c.instructions));
+
+      return waitFor(function () {
+        return chamadas.filter(function (c2) { return c2.url.indexOf('realtime-sdp') > -1; })[0];
+      }, 'troca de SDP');
+    })
+    .then(function (chamada) {
+      ok('trocou SDP pelo proxy local', true);
+      ok('mandou a chave efêmera, não a permanente', chamada.corpo.ephemeralKey === 'ek_de_mentira', chamada.corpo.ephemeralKey);
+      ok('a oferta SDP é uma oferta de verdade', /^v=0/.test(chamada.corpo.sdp || ''), (chamada.corpo.sdp || '').slice(0, 20));
+      ok('a oferta tem seção de áudio', /m=audio/.test(chamada.corpo.sdp || ''));
+
+      /* o SDP de resposta era lixo: o app tem que se recuperar, não travar */
+      return waitFor(function () { return win.Voz.estado() === 'off'; }, 'volta para off com SDP inválido');
+    })
+    .then(function () {
+      ok('SDP inválido não deixa a sessão pendurada', win.Voz.estado() === 'off');
+      ok('o botão do agente continua clicável',
+         !doc.getElementById('btn-agente').disabled);
+      ok('mostrou o diagnóstico em vez de falhar calado',
+         !doc.getElementById('copilot-diag').hidden ||
+         /Religando|Ligando/.test(doc.getElementById('agente-label').textContent),
+         doc.getElementById('agente-label').textContent);
+
+      /* erro transitório: ele tem que agendar reconexão sozinho */
+      var conf = win.localStorage.getItem('kao:config:' + Object.keys(localStorage).length);
+      ok('modo agente continua ligado depois de erro com conserto',
+         /Religando|ativo|Ligando/.test(doc.getElementById('agente-label').textContent),
+         doc.getElementById('agente-label').textContent);
+
+      return esperar(500);
+    })
+    .then(function () {
+      /* desligar de propósito tem que parar tudo e ficar parado */
+      var antes = chamadas.length;
+      doc.getElementById('btn-agente').click();
+      return esperar(3000).then(function () {
+        ok('desligar para a reconexão', win.Voz.estado() === 'off', win.Voz.estado());
+        ok('rótulo volta para "Ativar agente"',
+           doc.getElementById('agente-label').textContent === 'Ativar agente',
+           doc.getElementById('agente-label').textContent);
+        ok('não tentou reconectar depois de desligado',
+           chamadas.filter(function (c) { return c.url.indexOf('realtime-token') > -1; }).length < 12,
+           'chamadas: ' + chamadas.length);
+      });
+    })
+    .then(function () {
+      /* religar pelo botão */
+      doc.getElementById('btn-agente').click();
+      return waitFor(function () { return win.Voz.estado() !== 'off'; }, 'religa no clique');
+    })
+    .then(function () {
+      ok('clique religa o agente', true);
+      doc.getElementById('btn-agente').click();       // desliga para não ficar tentando
+      return esperar(400);
+    })
+    .then(function () {
+      ok('preferência do agente é salva',
+         win.Store.Config.get(win.Store.Users.all()[0].id).agenteAtivo === false,
+         String(win.Store.Config.get(win.Store.Users.all()[0].id).agenteAtivo));
+      ok('nenhum erro de JavaScript durante todo o fluxo', errosApp.length === 0, errosApp.join(' | '));
+    })
+    .catch(function (e) {
+      results.push('FAIL exceção: ' + e.message + (errosApp.length ? '  || erros: ' + errosApp.join(' | ') : ''));
+    })
+    .then(function () {
+      var fails = results.filter(function (r) { return r.indexOf('FAIL') === 0; });
+      var rel = results.join('\n') + '\n\n===== ' + (results.length - fails.length) + '/' + results.length +
+        ' passaram — ' + (fails.length ? 'HOUVE FALHAS' : 'TUDO VERDE') + ' =====';
+      document.getElementById('out').textContent = rel;
+      try { new Image().src = 'http://localhost:5288/r?d=' + encodeURIComponent(rel); } catch (e) {}
+    });
+});
+</script>
+</body></html>

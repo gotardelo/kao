@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — memória de longo prazo
+   TDAHZEI — memória de longo prazo
    O que faz ele parar de te tratar como estranho a cada aba nova.
 
    Três camadas:

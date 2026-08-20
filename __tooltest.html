@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — testes de memória, finanças e ferramentas</title></head>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>TDAHZEI — testes de memória, finanças e ferramentas</title></head>
 <body>
 <pre id="out">rodando…</pre>
 <script src="js/icons.js"></script>
 <script src="js/markdown.js"></script>
 <script src="js/persona.js"></script>
+<script src="js/avatar.js"></script>
 <script src="js/store.js"></script>
 <script src="js/memoria.js"></script>
 <script src="js/financas.js"></script>
@@ -134,7 +135,17 @@ var nomes = Ferramentas.DEFINICOES.map(function (t) { return t.name; });
 ok('toda ferramenta tem executor', nomes.every(function (n) {
   return Ferramentas.executar(UID, n, {}).conteudo.indexOf('desconhecida') === -1;
 }), nomes.join(','));
-ok('todo schema é strict', Ferramentas.DEFINICOES.every(function (t) { return t.strict === true; }));
+/* Todas são strict — menos a de retoque do avatar, que manda um campo
+   por vez e por isso não pode exigir a ficha inteira. */
+var SOLTAS = ['atualizar_avatar'];
+ok('schema strict em tudo que grava', Ferramentas.DEFINICOES.every(function (t) {
+  return SOLTAS.indexOf(t.name) > -1 ? t.strict === false : t.strict === true;
+}), Ferramentas.DEFINICOES.filter(function (t) {
+  return SOLTAS.indexOf(t.name) > -1 ? t.strict !== false : t.strict !== true;
+}).map(function (t) { return t.name; }).join(','));
+ok('ferramenta de retoque não exige campo nenhum',
+   Ferramentas.DEFINICOES.filter(function (t) { return t.name === 'atualizar_avatar'; })[0]
+     .input_schema.required.length === 0);
 ok('todo schema barra campo extra', Ferramentas.DEFINICOES.every(function (t) {
   return t.input_schema.additionalProperties === false;
 }));
@@ -151,30 +162,30 @@ eq('sem uso, custo zero', Store.Usage.doMes(UT).cost, 0);
 ok('sem teto definido nunca estoura', !Store.Usage.teto(UT, 0).estourou);
 ok('restante infinito sem teto', Store.Usage.teto(UT, 0).restante === Infinity);
 
-/* 1M entrada + 1M saida no Opus 5 = 5 + 25 = US$ 30 */
-Store.Usage.add(UT, 1000000, 1000000, 'claude-opus-5');
-eq('custo do mes acumula', Math.round(Store.Usage.doMes(UT).cost), 30);
-eq('total acumula junto', Math.round(Store.Usage.get(UT).cost), 30);
+/* 1M entrada + 1M saida no GPT-5.6 Terra = 2 + 12 = US$ 14 */
+Store.Usage.add(UT, 1000000, 1000000, 'gpt-5.6-terra');
+eq('custo do mes acumula', Math.round(Store.Usage.doMes(UT).cost), 14);
+eq('total acumula junto', Math.round(Store.Usage.get(UT).cost), 14);
 eq('conta as chamadas', Store.Usage.doMes(UT).calls, 1);
 
 var t10 = Store.Usage.teto(UT, 10);
 ok('estourou um teto de 10', t10.estourou, String(t10.gasto));
 eq('restante zerado', t10.restante, 0);
 
-var t50 = Store.Usage.teto(UT, 50);
-ok('nao estourou um teto de 50', !t50.estourou);
-eq('percentual do teto', t50.pct, 60);
-ok('60% ainda nao e "perto"', !t50.perto);
+var t20 = Store.Usage.teto(UT, 20);
+ok('nao estourou um teto de 20', !t20.estourou);
+eq('percentual do teto', t20.pct, 70);
+ok('70% ainda nao e "perto"', !t20.perto);
 
-Store.Usage.add(UT, 500000, 300000, 'claude-opus-5');  /* +2.5 +7.5 = 10 -> 40 de 50 */
-var t50b = Store.Usage.teto(UT, 50);
-ok('80% dispara o aviso de "perto"', t50b.perto, String(t50b.pct));
-ok('mas ainda nao bloqueia', !t50b.estourou);
+Store.Usage.add(UT, 500000, 300000, 'gpt-5.6-terra');  /* +1 +3.6 = 4.6 -> 18.6 de 20 */
+var t20b = Store.Usage.teto(UT, 20);
+ok('80% dispara o aviso de "perto"', t20b.perto, String(t20b.pct));
+ok('mas ainda nao bloqueia', !t20b.estourou);
 
-/* Haiku e ~5x mais barato que Opus na saida */
+/* Luna e ~10x mais barato que Terra */
 localStorage.removeItem(Store.keys.usage(UT));
-Store.Usage.add(UT, 1000000, 1000000, 'claude-haiku-4-5');
-eq('haiku 4.5 custa 6 no mesmo volume', Math.round(Store.Usage.doMes(UT).cost), 6);
+Store.Usage.add(UT, 1000000, 1000000, 'gpt-5.6-luna');
+eq('luna custa 1.4 no mesmo volume', Store.Usage.doMes(UT).cost.toFixed(1), '1.4');
 
 /* mes anterior nao conta no teto atual */
 localStorage.removeItem(Store.keys.usage(UT));
@@ -196,23 +207,23 @@ eq('formato antigo comeca o mes zerado', Store.Usage.doMes('u-antigo').cost, 0);
 var UC = 'u-cache';
 localStorage.removeItem(Store.keys.usage(UC));
 
-/* sem cache: 1M entrada Opus = US$ 5 */
-Store.Usage.add(UC, 1000000, 0, 'claude-opus-5', { lidos: 0, escritos: 0 });
-eq('entrada normal custa cheio', Math.round(Store.Usage.doMes(UC).cost), 5);
+/* sem cache: 1M entrada no Terra = US$ 2 */
+Store.Usage.add(UC, 1000000, 0, 'gpt-5.6-terra', { lidos: 0, escritos: 0 });
+eq('entrada normal custa cheio', Math.round(Store.Usage.doMes(UC).cost), 2);
 eq('sem cache, sem economia', Store.Usage.doMes(UC).economia, 0);
 
-/* leitura de cache custa 10% */
+/* leitura de cache custa 10% do preço de entrada */
 localStorage.removeItem(Store.keys.usage(UC));
-Store.Usage.add(UC, 0, 0, 'claude-opus-5', { lidos: 1000000, escritos: 0 });
-eq('leitura de cache custa 10%', Store.Usage.doMes(UC).cost.toFixed(2), '0.50');
-eq('economia registrada', Store.Usage.doMes(UC).economia.toFixed(2), '4.50');
+Store.Usage.add(UC, 0, 0, 'gpt-5.6-terra', { lidos: 1000000, escritos: 0 });
+eq('leitura de cache custa 10%', Store.Usage.doMes(UC).cost.toFixed(2), '0.20');
+eq('economia registrada', Store.Usage.doMes(UC).economia.toFixed(2), '1.80');
 eq('tokens de cache contabilizados', Store.Usage.doMes(UC).cacheLido, 1000000);
 
-/* gravação de cache custa 125% */
+/* a OpenAI cacheia sozinha e nao cobra gravacao: o cliente sempre reporta 0 */
 localStorage.removeItem(Store.keys.usage(UC));
-Store.Usage.add(UC, 0, 0, 'claude-opus-5', { lidos: 0, escritos: 1000000 });
-eq('gravar cache custa 125%', Store.Usage.doMes(UC).cost.toFixed(2), '6.25');
-ok('gravar cache nao gera economia', Store.Usage.doMes(UC).economia === 0, String(Store.Usage.doMes(UC).economia));
+Store.Usage.add(UC, 0, 0, 'gpt-5.6-terra', { lidos: 0, escritos: 0 });
+eq('sem gravacao de cache, custo zero', Store.Usage.doMes(UC).cost, 0);
+ok('e sem economia inventada', Store.Usage.doMes(UC).economia === 0, String(Store.Usage.doMes(UC).economia));
 
 /* corpo da requisicao com cache */
 var corpoCache = null;
@@ -225,38 +236,36 @@ window.fetch = function (url, opts) {
 };
 
 Claude.stream({
-  apiKey: 'k', model: 'claude-opus-5', maxTokens: 4000,
+  apiKey: 'k', model: 'gpt-5.6-terra', maxTokens: 4000,
   systemEstavel: 'PERSONALIDADE FIXA', systemVolatil: 'MEMORIA QUE MUDA',
   messages: [{ role: 'user', content: 'oi' }], tools: Ferramentas.DEFINICOES
 }, {}).promise.then(function () {
-  ok('system virou array de blocos', Array.isArray(corpoCache.system), typeof corpoCache.system);
-  eq('bloco estavel vem primeiro', corpoCache.system[0].text, 'PERSONALIDADE FIXA');
-  eq('marcador de cache no bloco estavel', corpoCache.system[0].cache_control, { type: 'ephemeral' });
-  eq('bloco volatil vem depois', corpoCache.system[1].text, 'MEMORIA QUE MUDA');
-  ok('volatil NAO e cacheado', !corpoCache.system[1].cache_control,
-     JSON.stringify(corpoCache.system[1].cache_control));
+  var payload = corpoCache.payload;
+  var sys = payload.messages[0];
 
-  var ferrs = corpoCache.tools;
-  eq('marcador na ultima ferramenta', ferrs[ferrs.length - 1].cache_control, { type: 'ephemeral' });
-  ok('ferramentas anteriores sem marcador', !ferrs[0].cache_control);
-  eq('so um marcador nas ferramentas',
-     ferrs.filter(function (t) { return !!t.cache_control; }).length, 1);
-  ok('marcar nao polui a definicao original',
-     !Ferramentas.DEFINICOES[Ferramentas.DEFINICOES.length - 1].cache_control,
+  ok('a chave nao vai dentro do payload', !('apiKey' in payload));
+  eq('primeira mensagem e o system', sys.role, 'system');
+  ok('o estavel vem antes do volatil no prompt',
+     sys.content.indexOf('PERSONALIDADE FIXA') > -1 &&
+     sys.content.indexOf('PERSONALIDADE FIXA') < sys.content.indexOf('MEMORIA QUE MUDA'),
+     sys.content);
+  eq('a conversa vem depois do system', payload.messages[1], { role: 'user', content: 'oi' });
+
+  var ferrs = payload.tools;
+  eq('todas as ferramentas enviadas', ferrs.length, Ferramentas.DEFINICOES.length);
+  ok('nenhuma carrega marcador de cache da Anthropic',
+     ferrs.every(function (t) { return !t.cache_control; }));
+  ok('converter nao polui a definicao original',
+     Ferramentas.DEFINICOES.every(function (t) { return !t.type && !!t.input_schema; }),
      'a lista global foi modificada');
 
-  /* com cache desligado volta ao formato simples */
-  return Claude.stream({
-    apiKey: 'k', model: 'claude-opus-5', maxTokens: 4000, cache: false,
-    systemEstavel: 'PERSONALIDADE FIXA', systemVolatil: 'MEMORIA QUE MUDA',
-    messages: [{ role: 'user', content: 'oi' }], tools: Ferramentas.DEFINICOES
-  }, {}).promise;
-}).then(function () {
-  ok('sem cache, system vira string', typeof corpoCache.system === 'string', typeof corpoCache.system);
-  ok('sem cache, as duas partes continuam no prompt',
-     /PERSONALIDADE FIXA/.test(corpoCache.system) && /MEMORIA QUE MUDA/.test(corpoCache.system));
-  ok('sem cache, nenhuma ferramenta marcada',
-     corpoCache.tools.every(function (t) { return !t.cache_control; }));
+  /* mesmas ferramentas, agora no formato plano da Realtime API */
+  var rt = Ferramentas.paraRealtime();
+  eq('realtime tem a mesma quantidade', rt.length, Ferramentas.DEFINICOES.length);
+  eq('realtime usa formato plano', rt[0].type, 'function');
+  ok('realtime poe o nome no topo', typeof rt[0].name === 'string' && !rt[0].function, JSON.stringify(rt[0]).slice(0, 80));
+  ok('realtime leva o schema em parameters', !!rt[0].parameters.properties);
+
   window.fetch = fetchAntigo;
 }).catch(function (e) {
   results.push('FAIL cache: ' + e.message);
@@ -265,6 +274,65 @@ Claude.stream({
 
 /* o restante dos testes espera este bloco terminar */
 function proximo() {
+
+/* ============ AVATAR ============ */
+var UA = 'u-avatar';
+localStorage.removeItem(Store.keys.avatar(UA));
+localStorage.removeItem(Store.keys.memoria(UA));
+localStorage.removeItem(Store.keys.progress(UA));
+
+var f0 = Avatar.ficha(UA, {});
+eq('ficha vazia cai no padrao', f0.cabelo, 'curto');
+eq('skin inicial e a do nivel 1', f0.skin, 'grafite');
+ok('svg sai como svg', /^<svg /.test(Avatar.svg(f0, 100)));
+ok('svg respeita o tamanho pedido', Avatar.svg(f0, 64).indexOf('width="64"') > -1);
+
+/* deducao a partir dos fatos guardados */
+Memoria.lembrar(UA, 'Usa oculos de grau e tem cabelo cacheado', 'vida', 'auto');
+Memoria.lembrar(UA, 'Tem um gato preto chamado Rick', 'pessoas', 'auto');
+Memoria.lembrar(UA, 'Escuta lofi de fone o dia todo', 'gosto', 'auto');
+var f1 = Avatar.ficha(UA, {});
+eq('deduziu o cabelo do fato', f1.cabelo, 'cacheado');
+eq('deduziu os oculos', f1.oculos, 'quadrado');
+eq('deduziu o gato', f1.companhia, 'gato');
+ok('deduziu o fone', f1.acessorios.indexOf('fone') > -1, f1.acessorios.join(','));
+ok('contou os tracos', Avatar.tracos(UA, {}) >= 5, String(Avatar.tracos(UA, {})));
+
+/* o modelo manda um pedaco e ganha da deducao */
+Avatar.aprender(UA, { cabelo: 'crespo', pele: 'negra' });
+var f2 = Avatar.ficha(UA, {});
+eq('o que o modelo definiu vence o palpite', f2.cabelo, 'crespo');
+eq('e o resto do palpite continua', f2.companhia, 'gato');
+
+/* o ajuste manual ganha de todo mundo */
+Avatar.ajustar(UA, { cabelo: 'careca' });
+eq('ajuste manual vence o modelo', Avatar.ficha(UA, {}).cabelo, 'careca');
+Avatar.aprender(UA, { cabelo: 'longo' });
+eq('modelo nao sobrescreve o manual', Avatar.ficha(UA, {}).cabelo, 'careca');
+
+/* campo fora da lista e ignorado */
+Avatar.aprender(UA, { inventado: 'x', cabelo: 'coque' });
+ok('campo desconhecido e descartado', Avatar.ficha(UA, {}).inventado === undefined);
+
+/* skins travam por nivel */
+ok('skin de nivel alto nao aplica', !Avatar.usarSkin(UA, 'ouro'));
+eq('e a skin continua a de antes', Avatar.ficha(UA, {}).skin, 'grafite');
+Store.Progress.reward(UA, 900, 'teste');
+ok('subiu de nivel', Store.Progress.get(UA).level >= 3, String(Store.Progress.get(UA).level));
+ok('agora a skin de nivel 3 aplica', Avatar.usarSkin(UA, 'noite'));
+eq('skin trocada', Avatar.ficha(UA, {}).skin, 'noite');
+ok('lista marca o que esta liberado',
+   Avatar.skinsDe(UA).filter(function (s) { return s.liberada; }).length >= 2);
+
+/* a ferramenta grava mesmo */
+var rAv = Ferramentas.executar(UA, 'atualizar_avatar', { barba: 'cheia', objeto: 'cafe' });
+ok('ferramenta nao deu erro', !rAv.erro, rAv.conteudo);
+eq('barba gravada pela ferramenta', Avatar.ficha(UA, {}).barba, 'cheia');
+ok('resposta descreve o boneco', /barba cheia/.test(rAv.conteudo), rAv.conteudo);
+
+/* zerar volta ao palpite, nao ao vazio */
+Avatar.esquecer(UA);
+eq('depois de zerar, volta a deduzir', Avatar.ficha(UA, {}).cabelo, 'cacheado');
 
 /* ============ LAÇO DE FERRAMENTAS NO STREAMING ============ */
 var chamadas = [];
@@ -277,27 +345,17 @@ window.fetch = function (url, opts) {
   chamadas.push(body);
   rodada++;
   var texto = rodada === 1 ? sse([
-    'data: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}', '',
-    'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}', '',
-    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"preciso registrar"}}', '',
-    'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ASSINATURA123"}}', '',
-    'data: {"type":"content_block_stop","index":0}', '',
-    'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}', '',
-    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Anotei aqui."}}', '',
-    'data: {"type":"content_block_stop","index":1}', '',
-    'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"registrar_gasto","input":{}}}', '',
-    'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"valor\\":55,"}}', '',
-    'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\"descricao\\":\\"pizza\\",\\"categoria\\":\\"comida\\"}"}}', '',
-    'data: {"type":"content_block_stop","index":2}', '',
-    'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":40}}', '',
-    'data: {"type":"message_stop"}', ''
+    'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Anotei aqui."}}]}', '',
+    'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"registrar_gasto","arguments":"{\\"valor\\":55,"}}]}}]}', '',
+    'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"descricao\\":\\"pizza\\",\\"categoria\\":\\"comida\\"}"}}]}}]}', '',
+    'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}', '',
+    'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":40}}', '',
+    'data: [DONE]', ''
   ]) : sse([
-    'data: {"type":"message_start","message":{"usage":{"input_tokens":150,"output_tokens":0}}}', '',
-    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}', '',
-    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Total do mês agora é 55."}}', '',
-    'data: {"type":"content_block_stop","index":0}', '',
-    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}', '',
-    'data: {"type":"message_stop"}', ''
+    'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":" Total do mês agora é 55."}}]}', '',
+    'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}', '',
+    'data: {"choices":[],"usage":{"prompt_tokens":150,"completion_tokens":25}}', '',
+    'data: [DONE]', ''
   ]);
 
   var enviado = false;
@@ -314,50 +372,43 @@ window.fetch = function (url, opts) {
 localStorage.removeItem(Store.keys.financas(UID));
 
 Claude.stream({
-  apiKey: 'k', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
-  system: 'sys', messages: [{ role: 'user', content: 'gastei 55 numa pizza' }],
+  apiKey: 'k', model: 'gpt-5.6-terra', effort: 'high', maxTokens: 8000,
+  systemEstavel: 'sys', messages: [{ role: 'user', content: 'gastei 55 numa pizza' }],
   tools: Ferramentas.DEFINICOES
 }, {}).promise.then(function (info) {
   eq('rodada 1 pede ferramenta', info.stopReason, 'tool_use');
   eq('1 ferramenta pedida', info.ferramentas.length, 1);
   eq('nome da ferramenta', info.ferramentas[0].name, 'registrar_gasto');
   eq('input remontado de vários deltas', info.ferramentas[0].input, { valor: 55, descricao: 'pizza', categoria: 'comida' });
+  eq('id da chamada preservado', info.ferramentas[0].id, 'call_1');
   eq('texto parcial preservado', info.text, 'Anotei aqui.');
-
-  /* os blocos precisam voltar intactos, com a assinatura do thinking */
-  var b = info.blocos;
-  eq('3 blocos remontados', b.length, 3);
-  eq('bloco 0 é thinking', b[0].type, 'thinking');
-  eq('assinatura do thinking preservada', b[0].signature, 'ASSINATURA123');
-  eq('conteúdo do thinking preservado', b[0].thinking, 'preciso registrar');
-  eq('bloco 2 é tool_use com id', b[2].id, 'toolu_1');
-  ok('tool_use não carrega json parcial solto', !('partial_json' in b[2]));
 
   /* simula o que o app faz: executa e manda de volta */
   var resultado = Ferramentas.executar(UID, info.ferramentas[0].name, info.ferramentas[0].input);
   eq('ferramenta gravou o gasto', Financas.resumo(UID).gastos, 55);
 
-  var msgs = [
-    { role: 'user', content: 'gastei 55 numa pizza' },
-    { role: 'assistant', content: info.blocos },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: resultado.conteudo, is_error: false }] }
-  ];
+  var hist = Claude.toApiMessages([{ role: 'user', content: 'gastei 55 numa pizza' }]);
+  var msgs = Claude.appendToolResults(hist, info, [
+    { tool_use_id: 'call_1', content: resultado.conteudo, is_error: false }
+  ]);
 
   return Claude.stream({
-    apiKey: 'k', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
-    system: 'sys', messages: msgs, tools: Ferramentas.DEFINICOES
+    apiKey: 'k', model: 'gpt-5.6-terra', effort: 'high', maxTokens: 8000,
+    systemEstavel: 'sys', messages: msgs, tools: Ferramentas.DEFINICOES
   }, {}).promise;
 }).then(function (info2) {
-  eq('rodada 2 encerra', info2.stopReason, 'end_turn');
+  eq('rodada 2 encerra', info2.stopReason, 'stop');
   eq('nenhuma ferramenta na rodada 2', info2.ferramentas.length, 0);
 
-  var b2 = chamadas[1];
+  var b2 = chamadas[1].payload;
   ok('ferramentas foram enviadas no corpo', Array.isArray(b2.tools) && b2.tools.length === Ferramentas.DEFINICOES.length,
      String(b2.tools && b2.tools.length));
-  eq('assistant devolvido com blocos', b2.messages[1].content[0].type, 'thinking');
-  eq('assinatura reenviada intacta', b2.messages[1].content[0].signature, 'ASSINATURA123');
-  eq('tool_result no formato certo', b2.messages[2].content[0].type, 'tool_result');
-  eq('tool_use_id casa', b2.messages[2].content[0].tool_use_id, 'toolu_1');
+  eq('system continua na frente', b2.messages[0].role, 'system');
+  eq('assistant devolvido com tool_calls', b2.messages[2].tool_calls[0].function.name, 'registrar_gasto');
+  eq('id da chamada reenviado', b2.messages[2].tool_calls[0].id, 'call_1');
+  eq('resultado volta como role tool', b2.messages[3].role, 'tool');
+  eq('tool_call_id casa', b2.messages[3].tool_call_id, 'call_1');
+  ok('resultado carrega o texto da ferramenta', /55/.test(b2.messages[3].content), b2.messages[3].content);
 }).catch(function (e) {
   results.push('FAIL exceção: ' + e.message + '\n' + e.stack);
 }).then(function () {

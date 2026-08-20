@@ -1,13 +1,13 @@
 {
-  "name": "Kao — Copiloto",
-  "short_name": "Kao",
+  "name": "TDAHZEI — Copiloto",
+  "short_name": "TDAHZEI",
   "description": "Seu copiloto pessoal com IA, disponível 24h no navegador.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#0b0d12",
-  "theme_color": "#0b0d12",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "lang": "pt-BR",
   "categories": ["productivity", "utilities"],
   "icons": [

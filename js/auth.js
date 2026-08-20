@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — cadastro, login e sessão
+   TDAHZEI — cadastro, login e sessão
    ============================================================ */
 (function (global) {
   'use strict';

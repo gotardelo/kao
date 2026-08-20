@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — página "Minha vida"
+   TDAHZEI — página "Minha vida"
    Mostra e edita o que a memória e as finanças guardaram. Tudo aqui
    também é gravável pela conversa; esta tela é para conferir,
    corrigir e ver o todo.

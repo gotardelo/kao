@@ -1,15 +1,15 @@
 /* ============================================================
-   Kao — service worker
+   TDAHZEI — service worker
    Estratégia: network-first para a casca do app (pega atualizações
    assim que existem) com cache como rede de segurança offline.
-   Nada de API é cacheado — chamadas à Anthropic sempre vão à rede.
+   Nada de API é cacheado — /api/ e a OpenAI sempre vão à rede.
 
    Princípio: o cache é um bônus, nunca um requisito. Se o
    CacheStorage estiver indisponível (modo anônimo, cota estourada,
    navegador com restrição), o worker instala do mesmo jeito e o app
    segue funcionando online.
    ============================================================ */
-const CACHE = 'kao-v1';
+const CACHE = 'tdahzei-v5';
 const SHELL = [
   './',
   './index.html',
@@ -19,6 +19,7 @@ const SHELL = [
   './css/vida.css',
   './js/icons.js',
   './js/persona.js',
+  './js/avatar.js',
   './js/wizard.js',
   './js/vida.js',
   './js/memoria.js',
@@ -27,6 +28,7 @@ const SHELL = [
   './js/store.js',
   './js/auth.js',
   './js/claude.js',
+  './js/voz.js',
   './js/markdown.js',
   './js/app.js',
   './icons/icon.svg'
@@ -66,7 +68,8 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;   // API da Anthropic: sempre rede
+  if (url.origin !== self.location.origin) return;   // fora do app: sempre rede
+  if (url.pathname.startsWith('/api/')) return;      // proxy da OpenAI: nunca cacheia
 
   event.respondWith((async () => {
     try {

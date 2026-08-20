@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — ferramentas que o modelo pode chamar
+   TDAHZEI — ferramentas que o modelo pode chamar
    O ponto: no TDAH, o atrito de registrar é o que mata qualquer
    sistema. Aqui você só fala ("gastei 40 no ifood", "paguei a luz")
    e ele grava sozinho, na hora, sem formulário.
@@ -17,6 +17,24 @@
         type: 'object',
         properties: props,
         required: required || Object.keys(props),
+        additionalProperties: false
+      }
+    };
+  }
+
+  /**
+   * Igual, mas sem modo estrito: serve para ferramenta de retoque, em que
+   * o modelo manda só o campo que descobriu e não a ficha inteira.
+   */
+  function toolSolta(name, description, props) {
+    return {
+      name: name,
+      description: description,
+      strict: false,
+      input_schema: {
+        type: 'object',
+        properties: props,
+        required: [],
         additionalProperties: false
       }
     };
@@ -85,6 +103,24 @@
     tool('consultar_financas',
       'Consulta a situação financeira completa do mês: gastos por categoria, contas em aberto, metas e saldo. Use antes de dar qualquer conselho sobre dinheiro, para falar com número na mão em vez de achismo.',
       {}, []),
+
+    toolSolta('atualizar_avatar',
+      'Ajusta o BONECO que representa a pessoa no app. Use sempre que ela contar algo sobre a própria ' +
+      'aparência, o que veste, o bicho que tem em casa ou o que vive por perto — mesmo de passagem, ' +
+      'mesmo que ela não peça. Mande só os campos que você descobriu agora, não a ficha inteira. ' +
+      'Nunca invente traço que não foi dito: sem informação, não chame esta ferramenta.',
+      { pele:      { type: 'string', enum: ['clara','media','oliva','morena','negra'], description: 'Tom de pele' },
+        cabelo:    { type: 'string', enum: ['curto','medio','longo','cacheado','crespo','raspado','coque','careca'], description: 'Estilo do cabelo' },
+        cabeloCor: { type: 'string', enum: ['preto','castanho','loiro','ruivo','grisalho','colorido'], description: 'Cor do cabelo' },
+        olhos:     { type: 'string', enum: ['castanho','preto','azul','verde','mel'], description: 'Cor dos olhos' },
+        barba:     { type: 'string', enum: ['nenhuma','curta','cheia','cavanhaque'], description: 'Barba' },
+        oculos:    { type: 'string', enum: ['nenhum','redondo','quadrado'], description: 'Óculos' },
+        roupa:     { type: 'string', enum: ['camiseta','moletom','camisa','jaleco','terno','regata'], description: 'Roupa do dia a dia' },
+        acessorios:{ type: 'array', items: { type: 'string', enum: ['fone','bone','brinco','relogio','tatuagem'] },
+                     description: 'Acessórios que ela usa' },
+        companhia: { type: 'string', enum: ['nenhuma','gato','cachorro','planta'], description: 'Quem mora com ela' },
+        objeto:    { type: 'string', enum: ['nenhum','cafe','livro','remedio','violao','notebook'], description: 'O que vive por perto' },
+        expressao: { type: 'string', enum: ['neutro','sorriso','cansado','foco'], description: 'Como ela está hoje' } }),
 
     tool('anotar_diario',
       'Grava um resumo do que aconteceu hoje. Use no fim de uma conversa relevante, ou quando a pessoa contar como foi o dia. É isso que te faz lembrar amanhã do que rolou hoje.',
@@ -211,11 +247,32 @@
     anotar_diario: function (uid, i) {
       Memoria.anotarDia(uid, i.resumo);
       return 'Anotado no diário de ' + Memoria.hoje() + '.';
+    },
+
+    atualizar_avatar: function (uid, i) {
+      var antes = Avatar.tracos(uid);
+      Avatar.aprender(uid, i);
+      var f = Avatar.ficha(uid);
+      var depois = Avatar.tracos(uid);
+      return 'Avatar atualizado (' + depois + ' traços' +
+             (depois > antes ? ', ' + (depois - antes) + ' novo(s)' : '') + '): ' + Avatar.descrever(f);
     }
   };
 
   var Ferramentas = {
     DEFINICOES: DEFINICOES,
+
+    /** Mesmas ferramentas no formato plano que a Realtime API espera. */
+    paraRealtime: function () {
+      return DEFINICOES.map(function (t) {
+        return {
+          type: 'function',
+          name: t.name,
+          description: t.description,
+          parameters: t.input_schema
+        };
+      });
+    },
 
     /** Executa uma chamada e devolve { conteudo, erro }. */
     executar: function (uid, nome, input) {
@@ -244,6 +301,7 @@
         case 'guardar_na_meta':    return 'guardando dinheiro';
         case 'consultar_financas': return 'consultando suas finanças';
         case 'anotar_diario':      return 'escrevendo no diário';
+        case 'atualizar_avatar':   return 'desenhando você';
         default:                   return 'usando ' + nome;
       }
     }

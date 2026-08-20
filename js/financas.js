@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — gestão financeira
+   TDAHZEI — gestão financeira
    Pensado para TDAH: o atrito de registrar é o que mata qualquer
    app de finanças. Aqui o registro acontece conversando —
    "gastei 40 no ifood" — e as ferramentas gravam sozinhas.

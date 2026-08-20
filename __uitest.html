@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — teste de interface</title></head>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>TDAHZEI — teste de interface</title></head>
 <body>
 <pre id="out">rodando…</pre>
 <iframe id="app" src="index.html" style="width:1200px;height:800px;border:1px solid #333"></iframe>
@@ -11,12 +11,11 @@ function ok(name, cond, extra) { results.push((cond ? 'PASS ' : 'FAIL ') + name 
 localStorage.clear();
 
 var SSE = [
-  'event: message_start',
-  'data: {"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":0}}}','',
-  'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Claro! **Aqui** vai:"}}','',
-  'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"\\n\\n- item um\\n- item dois"}}','',
-  'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":30}}','',
-  'data: {"type":"message_stop"}',''
+  'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Claro! **Aqui** vai:"}}]}','',
+  'data: {"choices":[{"index":0,"delta":{"content":"\\n\\n- item um\\n- item dois"}}]}','',
+  'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}','',
+  'data: {"choices":[],"usage":{"prompt_tokens":50,"completion_tokens":30}}','',
+  'data: [DONE]',''
 ].join('\n');
 
 /* Erros dentro do iframe não sobem para cá — precisamos escutar lá dentro,
@@ -29,12 +28,21 @@ function espiarErros(win) {
 
 function stubFetch(win) {
   win.fetch = function (url, opts) {
-    if (String(url).indexOf('/v1/models') > -1) {
-      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ data: [] }); } });
+    var u = String(url);
+
+    // validação da chave: o proxy responde JSON simples
+    if (u.indexOf('/api/openai/test') > -1 || u.indexOf('/v1/models') > -1) {
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: function () { return Promise.resolve({ ok: true, count: 0 }); }
+      });
     }
+
+    // conversa: o proxy repassa o SSE da OpenAI
     var sent = false;
     return Promise.resolve({
       ok: true, status: 200,
+      json: function () { return Promise.resolve({}); },
       body: { getReader: function () { return { read: function () {
         if (sent) return Promise.resolve({ done: true });
         sent = true;
@@ -82,8 +90,10 @@ frame.addEventListener('load', function () {
     })
     .then(function () {
       ok('cadastro leva direto para o app', true);
-      ok('avatar mostra as iniciais', doc.getElementById('topbar-avatar').textContent === 'GT',
-         doc.getElementById('topbar-avatar').textContent);
+      // O canto agora mostra o boneco, não as iniciais
+      ok('barra do topo desenha o avatar',
+         !!doc.querySelector('#topbar-avatar .av-svg'),
+         doc.getElementById('topbar-avatar').innerHTML.slice(0, 60));
 
       /* ---------- criador de personagem abre sozinho ---------- */
       ok('criador de personagem abre no 1º acesso',
@@ -179,7 +189,7 @@ frame.addEventListener('load', function () {
       ok('firmeza alta vira instrução firme', prompt.indexOf('Seja firme de verdade') > -1);
 
       /* ---------- salvar a chave ---------- */
-      doc.getElementById('api-key').value = 'sk-ant-api03-fake-para-teste';
+      doc.getElementById('api-key').value = 'sk-proj-fake-para-teste';
       doc.getElementById('btn-save-key').click();
       return waitFor(function () { return doc.getElementById('key-badge').textContent === 'Conectada'; }, 'chave validada');
     })
@@ -192,7 +202,7 @@ frame.addEventListener('load', function () {
       doc.getElementById('api-key').value = 'chave-qualquer';
       doc.getElementById('btn-save-key').click();
       ok('chave em formato inválido é barrada',
-         doc.getElementById('key-result').textContent.indexOf('sk-ant-') > -1,
+         doc.getElementById('key-result').textContent.indexOf('sk-') > -1,
          doc.getElementById('key-result').textContent);
       doc.getElementById('api-key').value = before;
 
@@ -289,7 +299,7 @@ frame.addEventListener('load', function () {
       ok('app fica escondido após sair', doc.getElementById('view-app').classList.contains('hidden'));
       ok('nenhum erro de JavaScript durante todo o fluxo', errosApp.length === 0, errosApp.join(' | '));
     })
-    .catch(function (e) { results.push('FAIL exceção: ' + e.message); })
+    .catch(function (e) { results.push('FAIL exceção: ' + e.message + (errosApp.length ? '  || erros no app: ' + errosApp.join(' | ') : '')); })
     .then(function () {
       var fails = results.filter(function (r) { return r.indexOf('FAIL') === 0; });
       var report = results.join('\n') + '\n\n===== ' + (results.length - fails.length) + '/' + results.length +

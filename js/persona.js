@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — o TDAHzeiro
+   TDAHZEI — o TDAHzeiro
    Personagem, atributos, voz e a tradução disso tudo em prompt.
 
    A ideia: o usuário monta um personagem como num RPG (classe +
@@ -214,7 +214,7 @@
     var primeiroNome = String(user && user.name || 'você').split(' ')[0];
     var comoChamar = p.apelido || primeiroNome;
     var arq = archetypeOf(c.arquetipo);
-    var nomePersona = c.nome || 'Kao';
+    var nomePersona = c.nome || 'TDAHZEI';
     var L = [];
 
     /* --- identidade --- */
@@ -337,19 +337,53 @@
   /* ============================================================
      DITADO — falar em vez de digitar (salva-vidas no TDAH)
      ============================================================ */
+  var ERROS_DITADO = {
+    'not-allowed': 'O microfone está bloqueado. Libere no cadeado da barra de endereço.',
+    'service-not-allowed': 'O navegador bloqueou o reconhecimento de voz neste site.',
+    'no-speech': 'Não ouvi nada. Tente de novo mais perto do microfone.',
+    'audio-capture': 'Nenhum microfone encontrado neste aparelho.',
+    'network': 'O ditado do navegador precisa de internet e falhou ao conectar.',
+    'aborted': ''
+  };
+
   var Ditado = {
     _rec: null,
+
     disponivel: function () {
-      return !!(global.SpeechRecognition || global.webkitSpeechRecognition);
+      if (!(global.SpeechRecognition || global.webkitSpeechRecognition)) return false;
+      // Fora de HTTPS/localhost o Chrome aceita criar o objeto e falha depois.
+      return !!global.isSecureContext;
     },
+
+    /**
+     * @param {function} aoTexto  (textoCompleto, jaFinalizado)
+     * @param {function} aoFim    (jaFinalizado, mensagemDeErro)
+     * @returns {boolean} conseguiu começar
+     */
     iniciar: function (aoTexto, aoFim) {
       if (!Ditado.disponivel()) return false;
+      if (Ditado._rec) Ditado.parar();          // nunca dois ao mesmo tempo
+
       var SR = global.SpeechRecognition || global.webkitSpeechRecognition;
-      var rec = new SR();
+      var rec;
+      try { rec = new SR(); } catch (e) { return false; }
+
       rec.lang = 'pt-BR';
       rec.continuous = true;
       rec.interimResults = true;
+
       var finalizado = '';
+      var encerrado = false;
+      var erroMsg = '';
+
+      function encerrar() {
+        if (encerrado) return;
+        encerrado = true;
+        Ditado._rec = null;
+        try { rec.onresult = rec.onend = rec.onerror = null; } catch (_) {}
+        if (aoFim) aoFim(finalizado, erroMsg);
+      }
+
       rec.onresult = function (e) {
         var parcial = '';
         for (var i = e.resultIndex; i < e.results.length; i++) {
@@ -358,13 +392,30 @@
         }
         aoTexto(finalizado + parcial, finalizado);
       };
-      rec.onend = function () { Ditado._rec = null; if (aoFim) aoFim(finalizado); };
-      rec.onerror = function () { Ditado._rec = null; if (aoFim) aoFim(finalizado); };
-      rec.start();
+      rec.onend = encerrar;
+      rec.onerror = function (e) {
+        var codigo = (e && e.error) || '';
+        erroMsg = ERROS_DITADO.hasOwnProperty(codigo)
+          ? ERROS_DITADO[codigo]
+          : 'O ditado parou: ' + (codigo || 'erro desconhecido') + '.';
+        encerrar();
+      };
+
+      // start() lança de verdade em alguns estados; sem isso o botão trava.
+      try { rec.start(); }
+      catch (e) { Ditado._rec = null; return false; }
+
       Ditado._rec = rec;
       return true;
     },
-    parar: function () { if (Ditado._rec) { try { Ditado._rec.stop(); } catch (e) {} } },
+
+    parar: function () {
+      var rec = Ditado._rec;
+      if (!rec) return;
+      Ditado._rec = null;                        // solta o estado antes de tudo
+      try { rec.stop(); } catch (e) { try { rec.abort(); } catch (_) {} }
+    },
+
     ativo: function () { return !!Ditado._rec; }
   };
 

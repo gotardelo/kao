@@ -2,7 +2,7 @@
   "name": "kao",
   "version": "0.1.0",
   "private": true,
-  "description": "Kao — copiloto pessoal com IA, 100% no navegador (HTML/CSS/JS puro).",
+  "description": "TDAHZEI — copiloto pessoal com IA, 100% no navegador (HTML/CSS/JS puro).",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js 5173"

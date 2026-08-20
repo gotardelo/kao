@@ -1,4 +1,4 @@
-/* Kao — ícones SVG inline (sem dependências externas).
+/* TDAHZEI — ícones SVG inline (sem dependências externas).
    Uso no HTML: <i data-ico="chat"></i> → Icons.render() substitui pelo SVG. */
 (function (global) {
   'use strict';

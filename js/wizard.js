@@ -1,5 +1,5 @@
 /* ============================================================
-   Kao — criação de personagem
+   TDAHZEI — criação de personagem
    Um assistente em passos, usado tanto no primeiro acesso quanto
    para editar o TDAHzeiro depois. Estilo ficha de RPG.
    ============================================================ */
@@ -157,7 +157,7 @@
   TELAS['boas-vindas'] = function () {
     return '' +
       '<div class="wz-hero">' +
-        '<div class="logo-mark xl">K</div>' +
+        '<div class="logo-mark xl">T</div>' +
         '<h2>Vamos criar seu TDAHzeiro</h2>' +
         '<p class="muted">Um copiloto genérico não ajuda muito com TDAH. Um personagem <em>seu</em>, com nome, jeito e voz próprios, ajuda — porque você volta a falar com ele.</p>' +
         '<div class="wz-cards">' +

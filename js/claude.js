@@ -1,57 +1,61 @@
 /* ============================================================
-   Kao — cliente da API Anthropic (fetch + SSE, direto do navegador)
-
-   O navegador só consegue chamar api.anthropic.com quando o header
-   'anthropic-dangerous-direct-browser-access' está presente — é o
-   opt-in oficial de CORS. Isso significa que a chave fica no
-   dispositivo do usuário: ótimo para uso pessoal, inadequado para
-   uma chave compartilhada entre várias pessoas.
+   TDAHZEI - cliente OpenAI (mantem o nome Claude para compatibilidade)
+   Usa o proxy local em server.js para evitar CORS e habilitar voz.
    ============================================================ */
 (function (global) {
   'use strict';
 
-  var ENDPOINT = 'https://api.anthropic.com/v1/messages';
-  var MODELS_ENDPOINT = 'https://api.anthropic.com/v1/models';
-  var VERSION = '2023-06-01';
+  var CHAT_PROXY = '/api/openai/chat';
+  var TEST_PROXY = '/api/openai/test';
 
-  /* ---------- catálogo (preços em US$ por 1M de tokens) ---------- */
+  /* Precos em US$ por 1M de tokens, conforme catalogo OpenAI. */
   var MODELS = [
     {
-      id: 'claude-opus-5',
-      name: 'Claude Opus 5',
+      id: 'gpt-5.6-terra',
+      name: 'GPT-5.6 Terra',
       tag: 'Recomendado',
-      desc: 'O melhor equilíbrio entre inteligência e custo. Raciocínio adaptativo ligado por padrão.',
-      ctx: 1000000, maxOut: 128000,
-      price: { in: 5, out: 25 },
-      effort: true, thinking: 'adaptive', fallbacks: true
+      desc: 'Equilibrio bom entre inteligencia, velocidade e custo para uso diario.',
+      ctx: 1050000, maxOut: 128000,
+      price: { in: 2, out: 12 },
+      effort: true
     },
     {
-      id: 'claude-sonnet-5',
-      name: 'Claude Sonnet 5',
-      tag: 'Rápido',
-      desc: 'Muito capaz e mais barato. Ótimo para o dia a dia e respostas longas.',
-      ctx: 1000000, maxOut: 128000,
-      price: { in: 3, out: 15 },
-      effort: true, thinking: 'adaptive', fallbacks: false
+      id: 'gpt-5.6-luna',
+      name: 'GPT-5.6 Luna',
+      tag: 'Economico',
+      desc: 'Barato e rapido para alto volume, check-ins e conversas curtas.',
+      ctx: 1050000, maxOut: 128000,
+      price: { in: 0.2, out: 1.2 },
+      effort: true
     },
     {
-      id: 'claude-haiku-4-5',
-      name: 'Claude Haiku 4.5',
-      tag: 'Econômico',
-      desc: 'O mais barato e rápido. Bom para tarefas simples e alto volume.',
-      ctx: 200000, maxOut: 64000,
-      price: { in: 1, out: 5 },
-      effort: false, thinking: 'budget', fallbacks: false
+      id: 'gpt-5.6-sol',
+      name: 'GPT-5.6 Sol',
+      tag: 'Maximo',
+      desc: 'Modelo frontier para raciocinio mais forte, planejamento e trabalho complexo.',
+      ctx: 1050000, maxOut: 128000,
+      price: { in: 5, out: 30 },
+      effort: true
     },
     {
-      id: 'claude-fable-5',
-      name: 'Claude Fable 5',
-      tag: 'Máximo',
-      desc: 'O modelo mais capaz da Anthropic, para trabalho difícil e longo. Custa bem mais.',
-      ctx: 1000000, maxOut: 128000,
-      price: { in: 10, out: 50 },
-      effort: true, thinking: 'always', fallbacks: true
+      id: 'gpt-5-mini',
+      name: 'GPT-5 mini',
+      tag: 'Compatibilidade',
+      desc: 'Modelo GPT-5 mais antigo, util caso sua conta ainda nao tenha GPT-5.6.',
+      ctx: 400000, maxOut: 128000,
+      price: { in: 0.25, out: 2 },
+      effort: true
     }
+  ];
+
+  /* Modelos de voz. Nao entram no seletor do chat, mas precisam de preco:
+     audio custa MUITO mais que texto, e o teto mensal so protege se souber
+     contar isso. Valores em US$ por 1M de tokens de audio. */
+  var VOZ_MODELS = [
+    { id: 'gpt-realtime-2.1',      name: 'GPT Realtime 2.1',      price: { in: 32, out: 64 } },
+    { id: 'gpt-realtime-2.1-mini', name: 'GPT Realtime 2.1 mini', price: { in: 10, out: 20 } },
+    { id: 'gpt-realtime-2',        name: 'GPT Realtime 2',        price: { in: 32, out: 64 } },
+    { id: 'gpt-realtime-1.5',      name: 'GPT Realtime 1.5',      price: { in: 32, out: 64 } }
   ];
 
   function modelOf(id) {
@@ -59,7 +63,11 @@
     return MODELS[0];
   }
 
-  /* ---------- erros com mensagem amigável ---------- */
+  function vozModelOf(id) {
+    for (var i = 0; i < VOZ_MODELS.length; i++) if (VOZ_MODELS[i].id === id) return VOZ_MODELS[i];
+    return VOZ_MODELS[0];
+  }
+
   function ApiError(message, kind, status) {
     var e = new Error(message);
     e.name = 'ApiError';
@@ -69,242 +77,244 @@
   }
 
   function describe(status, body) {
-    var type = (body && body.error && body.error.type) || '';
-    var msg = (body && body.error && body.error.message) || '';
+    var err = body && body.error;
+    var type = (err && (err.type || err.code)) || '';
+    var msg = (err && err.message) || '';
     switch (status) {
       case 400:
-        return ApiError('Requisição inválida: ' + (msg || 'verifique o modelo e as opções.'), 'invalid_request', 400);
+        return ApiError('Requisicao invalida: ' + (msg || 'confira modelo, chave e configuracoes.'), 'invalid_request', 400);
       case 401:
-        return ApiError('Chave da API inválida ou revogada. Confira em Chave & Modelo.', 'auth', 401);
+        return ApiError('Chave da OpenAI invalida ou revogada. Confira em Chave & Modelo.', 'auth', 401);
       case 403:
-        return ApiError('Sua chave não tem permissão para esse modelo.', 'permission', 403);
+        return ApiError('Sua chave nao tem permissao para esse modelo ou recurso.', 'permission', 403);
       case 404:
-        return ApiError('Modelo não encontrado para esta conta.', 'not_found', 404);
+        return ApiError('Modelo ou endpoint nao encontrado para esta conta' +
+          (msg ? ': ' + msg : '. Escolha outro modelo em Chave & Modelo.'), 'not_found', 404);
       case 413:
-        return ApiError('A conversa ficou grande demais para uma requisição.', 'too_large', 413);
+        return ApiError('A conversa ficou grande demais para uma requisicao.', 'too_large', 413);
       case 429:
         return ApiError('Limite de uso atingido. Aguarde alguns segundos e tente de novo.', 'rate_limit', 429);
       case 500: case 502: case 503:
-        return ApiError('A API da Anthropic teve um erro temporário. Tente novamente.', 'server', status);
-      case 529:
-        return ApiError('A API está sobrecarregada no momento. Tente em instantes.', 'overloaded', 529);
+        return ApiError('A API da OpenAI teve um erro temporario. Tente novamente.', 'server', status);
       default:
         return ApiError(msg || ('Erro inesperado (HTTP ' + status + ').'), type || 'unknown', status);
     }
   }
 
-  function headers(apiKey, betas) {
-    var h = {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true'
-    };
-    if (betas && betas.length) h['anthropic-beta'] = betas.join(',');
-    return h;
+  function request(path, body, signal) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: signal
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return null; })
+          .then(function (b) { throw describe(res.status, b); });
+      }
+      return res;
+    }).catch(function (err) {
+      throw normalizeNetwork(err);
+    });
   }
 
-  /**
-   * Monta o corpo da requisição respeitando as capacidades de cada modelo.
-   * Regras importantes da API atual:
-   *  - temperature/top_p foram removidos nos modelos 4.6+ (enviar → HTTP 400).
-   *  - budget_tokens só existe em modelos antigos (Haiku 4.5); nos novos usa-se
-   *    thinking adaptativo + output_config.effort.
-   *  - nunca desligamos o thinking nos modelos novos: baixar o esforço é melhor.
-   */
+  function buildSystem(opts) {
+    var chunks = [];
+    if (opts.system) chunks.push(opts.system);
+    if (opts.systemEstavel) chunks.push(opts.systemEstavel);
+    if (opts.systemVolatil) chunks.push(opts.systemVolatil);
+    return chunks.filter(Boolean).join('\n\n');
+  }
+
+  function toOpenAITools(tools) {
+    if (!tools || !tools.length) return null;
+    return tools.map(function (t) {
+      return {
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description || '',
+          parameters: t.input_schema || t.parameters || { type: 'object', properties: {}, additionalProperties: false },
+          strict: t.strict !== false
+        }
+      };
+    });
+  }
+
   function buildBody(opts) {
     var m = modelOf(opts.model);
-    var maxTokens = Math.min(opts.maxTokens || 8000, m.maxOut);
+    var maxTokens = Math.min(opts.maxTokens || 4000, m.maxOut);
+    var messages = (opts.messages || []).slice();
+    var system = buildSystem(opts);
+    if (system) messages.unshift({ role: 'system', content: system });
 
     var body = {
       model: m.id,
-      max_tokens: maxTokens,
+      messages: messages,
       stream: opts.stream !== false,
-      messages: opts.messages
+      max_completion_tokens: maxTokens
     };
 
-    /* ------------------------------------------------------------
-       CACHE DE PROMPT — a maior economia disponível aqui.
+    if (body.stream) body.stream_options = { include_usage: true };
+    if (m.effort && opts.effort && opts.effort !== 'none') body.reasoning_effort = opts.effort;
 
-       A API monta o prompt na ordem tools → system → messages, e o
-       cache é por prefixo: tudo antes de um marcador é reaproveitado
-       nas próximas mensagens por 10% do preço de entrada.
-
-       Como as ferramentas e a personalidade não mudam entre uma
-       mensagem e outra, elas são o prefixo perfeito. Por isso
-       'system' vem em duas partes: a estável (marcada para cache) e a
-       volátil (memória, finanças, hora atual), que fica depois.
-       ------------------------------------------------------------ */
-    var cachear = opts.cache !== false;
-
-    if (opts.tools && opts.tools.length) {
-      body.tools = opts.tools;
-      if (cachear) {
-        // marcador na última ferramenta = todo o bloco de ferramentas cacheado
-        body.tools = opts.tools.slice();
-        var ultima = Object.assign({}, body.tools[body.tools.length - 1]);
-        ultima.cache_control = { type: 'ephemeral' };
-        body.tools[body.tools.length - 1] = ultima;
-      }
+    var converted = toOpenAITools(opts.tools);
+    if (converted) {
+      body.tools = converted;
+      body.tool_choice = 'auto';
     }
 
-    if (opts.systemEstavel && cachear) {
-      body.system = [
-        { type: 'text', text: opts.systemEstavel, cache_control: { type: 'ephemeral' } }
-      ];
-      if (opts.systemVolatil) body.system.push({ type: 'text', text: opts.systemVolatil });
-    } else if (opts.systemEstavel || opts.system) {
-      var inteiro = opts.system || (opts.systemEstavel + (opts.systemVolatil ? '\n\n' + opts.systemVolatil : ''));
-      body.system = inteiro;
-    }
-
-    if (m.effort && opts.effort) body.output_config = { effort: opts.effort };
-
-    if (m.thinking === 'adaptive') {
-      body.thinking = { type: 'adaptive' };
-      if (opts.showThinking) body.thinking.display = 'summarized';
-    } else if (m.thinking === 'budget' && opts.showThinking && maxTokens >= 2048) {
-      body.thinking = { type: 'enabled', budget_tokens: Math.max(1024, Math.floor(maxTokens * 0.4)) };
-    }
-    // 'always' (Fable 5): thinking é sempre ligado e configurá-lo retorna 400 — omitimos.
-
-    var betas = [];
-    if (m.fallbacks) {
-      // Se um classificador recusar o pedido, o servidor reencaminha para outro
-      // modelo em vez de devolver uma resposta vazia.
-      betas.push('server-side-fallback-2026-07-01');
-      body.fallbacks = 'default';
-    }
-    return { body: body, betas: betas, model: m };
+    return { body: body, model: m };
   }
 
-  /** Converte o histórico do Kao no formato da API (só role/content). */
+  /**
+   * Segunda tentativa quando a API recusa a requisicao: alguns modelos e
+   * algumas contas nao aceitam reasoning_effort ou schema estrito de
+   * ferramenta. Melhor responder sem esses extras do que falhar.
+   */
+  function modoSeguro(body) {
+    var b = JSON.parse(JSON.stringify(body));
+    delete b.reasoning_effort;
+    if (b.tools) {
+      b.tools = b.tools.map(function (t) {
+        if (t.function) t.function.strict = false;
+        return t;
+      });
+    }
+    return b;
+  }
+
+  function vaiAdiantarTentarDeNovo(err, jaTentou) {
+    if (jaTentou || !err || err.name !== 'ApiError') return false;
+    if (err.status !== 400) return false;
+    return /reasoning_effort|effort|strict|schema|unsupported|unknown parameter/i.test(err.message || '');
+  }
+
   function toApiMessages(messages) {
     var out = [];
     for (var i = 0; i < messages.length; i++) {
       var m = messages[i];
-      if (m.error) continue;                       // erros não voltam para o modelo
-      var text = (m.content || '').trim();
+      if (m.error) continue;
+      var text = String(m.content || '').trim();
       if (!text) continue;
-      var role = m.role === 'assistant' ? 'assistant' : 'user';
-      // A API não aceita dois turnos seguidos do mesmo papel.
-      if (out.length && out[out.length - 1].role === role) {
-        out[out.length - 1].content += '\n\n' + text;
-      } else {
-        out.push({ role: role, content: text });
-      }
+      out.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: text });
     }
     while (out.length && out[0].role === 'assistant') out.shift();
     return out;
   }
 
-  /**
-   * Remonta os blocos de conteúdo da resposta a partir dos eventos SSE.
-   * Precisamos dos blocos originais (inclusive thinking com a assinatura)
-   * para devolvê-los intactos na próxima requisição do laço de ferramentas —
-   * thinking alterado ou omitido faz a API recusar o turno seguinte.
-   */
-  function Coletor() {
-    this.blocos = [];
-    this.jsonParcial = {};
+  function normalizeUsage(usage) {
+    usage = usage || {};
+    var prompt = usage.prompt_tokens || usage.input_tokens || 0;
+    var completion = usage.completion_tokens || usage.output_tokens || 0;
+    var details = usage.prompt_tokens_details || usage.input_tokens_details || {};
+    var cached = details.cached_tokens || details.cache_read_input_tokens || usage.cache_read_input_tokens || 0;
+    return {
+      input_tokens: Math.max(0, prompt - cached),
+      output_tokens: completion,
+      cache_read_input_tokens: cached,
+      cache_creation_input_tokens: 0
+    };
   }
-  Coletor.prototype.iniciar = function (i, bloco) {
-    this.blocos[i] = JSON.parse(JSON.stringify(bloco || {}));
-    if (this.blocos[i].type === 'tool_use') this.jsonParcial[i] = '';
-    if (this.blocos[i].type === 'text' && this.blocos[i].text == null) this.blocos[i].text = '';
-    if (this.blocos[i].type === 'thinking' && this.blocos[i].thinking == null) this.blocos[i].thinking = '';
-  };
-  Coletor.prototype.delta = function (i, d) {
-    var b = this.blocos[i];
-    if (!b) { this.iniciar(i, { type: d.type === 'input_json_delta' ? 'tool_use' : 'text', text: '' }); b = this.blocos[i]; }
-    if (d.type === 'text_delta') b.text = (b.text || '') + d.text;
-    else if (d.type === 'thinking_delta') b.thinking = (b.thinking || '') + d.thinking;
-    else if (d.type === 'signature_delta') b.signature = (b.signature || '') + d.signature;
-    else if (d.type === 'input_json_delta') this.jsonParcial[i] = (this.jsonParcial[i] || '') + d.partial_json;
-  };
-  Coletor.prototype.fechar = function (i) {
-    var b = this.blocos[i];
-    if (b && b.type === 'tool_use') {
-      try { b.input = JSON.parse(this.jsonParcial[i] || '{}'); }
-      catch (e) { b.input = {}; }
-    }
-  };
-  Coletor.prototype.resultado = function () {
-    return this.blocos.filter(function (b) { return !!b; });
-  };
+
+  function parseToolArgs(str) {
+    try { return JSON.parse(str || '{}'); }
+    catch (_) { return {}; }
+  }
+
+  function appendToolResults(history, info, resultados) {
+    var calls = (info.ferramentas || []).map(function (t) {
+      return {
+        id: t.id,
+        type: 'function',
+        function: {
+          name: t.name,
+          arguments: t.arguments || JSON.stringify(t.input || {})
+        }
+      };
+    });
+
+    var next = history.concat([{
+      role: 'assistant',
+      content: info.text || null,
+      tool_calls: calls
+    }]);
+
+    (resultados || []).forEach(function (r) {
+      next.push({
+        role: 'tool',
+        tool_call_id: r.tool_use_id,
+        content: String(r.content || r.conteudo || '')
+      });
+    });
+    return next;
+  }
 
   var Claude = {
     MODELS: MODELS,
+    VOZ_MODELS: VOZ_MODELS,
     modelOf: modelOf,
-    priceOf: function (id) { return modelOf(id).price; },
+    vozModelOf: vozModelOf,
+    ehModeloDeVoz: function (id) {
+      for (var i = 0; i < VOZ_MODELS.length; i++) if (VOZ_MODELS[i].id === id) return true;
+      return false;
+    },
+    priceOf: function (id) {
+      for (var i = 0; i < VOZ_MODELS.length; i++) if (VOZ_MODELS[i].id === id) return VOZ_MODELS[i].price;
+      return modelOf(id).price;
+    },
     toApiMessages: toApiMessages,
+    appendToolResults: appendToolResults,
 
-    /** Valida a chave sem gastar tokens; cai para uma chamada mínima se preciso. */
-    test: function (apiKey, model) {
-      return fetch(MODELS_ENDPOINT + '?limit=1', {
-        method: 'GET',
-        headers: headers(apiKey)
-      }).then(function (res) {
-        if (res.ok) return res.json().then(function () { return { ok: true, via: 'models' }; });
-        return res.json().catch(function () { return null; }).then(function (b) { throw describe(res.status, b); });
-      }).catch(function (err) {
-        if (err && err.name === 'ApiError') throw err;
-        // Rede/CORS: tenta uma mensagem mínima antes de desistir.
-        return Claude.send({
-          apiKey: apiKey, model: model || 'claude-haiku-4-5',
-          messages: [{ role: 'user', content: 'ping' }],
-          maxTokens: 16, stream: false, showThinking: false, effort: 'low'
-        }).then(function () { return { ok: true, via: 'messages' }; });
+    test: function (apiKey) {
+      return request(TEST_PROXY, { apiKey: apiKey }).then(function (res) {
+        return res.json().then(function () { return { ok: true }; });
       });
     },
 
-    /** Requisição sem streaming. Retorna { text, usage, stopReason }. */
     send: function (opts) {
       var built = buildBody(Object.assign({}, opts, { stream: false }));
-      return fetch(ENDPOINT, {
-        method: 'POST',
-        headers: headers(opts.apiKey, built.betas),
-        body: JSON.stringify(built.body),
-        signal: opts.signal
-      }).then(function (res) {
-        if (!res.ok) {
-          return res.json().catch(function () { return null; }).then(function (b) { throw describe(res.status, b); });
-        }
+      function pedir(payload, jaTentou) {
+        return request(CHAT_PROXY, { apiKey: opts.apiKey, payload: payload }, opts.signal)
+          .catch(function (err) {
+            if (!vaiAdiantarTentarDeNovo(err, jaTentou)) throw err;
+            return pedir(modoSeguro(payload), true);
+          });
+      }
+      return pedir(built.body, false).then(function (res) {
         return res.json();
       }).then(function (data) {
-        var text = '';
-        (data.content || []).forEach(function (b) { if (b.type === 'text') text += b.text; });
-        return { text: text, usage: data.usage || {}, stopReason: data.stop_reason, raw: data };
-      }).catch(function (err) {
-        throw normalizeNetwork(err);
+        var choice = data.choices && data.choices[0];
+        var msg = (choice && choice.message) || {};
+        return {
+          text: msg.content || '',
+          usage: normalizeUsage(data.usage),
+          stopReason: choice && choice.finish_reason,
+          raw: data
+        };
       });
     },
 
-    /**
-     * Streaming SSE.
-     * handlers: { onText(chunk), onThinking(chunk), onStart(), onDone(info), onError(err) }
-     * Retorna { promise, abort() }.
-     */
     stream: function (opts, handlers) {
       handlers = handlers || {};
       var controller = new AbortController();
       var built = buildBody(Object.assign({}, opts, { stream: true }));
+      var fullText = '';
       var usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
-      var stopReason = null, stopDetails = null;
-      var fullText = '', fullThinking = '';
-      var coletor = new Coletor();
+      var stopReason = null;
+      var toolCalls = [];
+      var notifiedTools = {};
 
-      var promise = fetch(ENDPOINT, {
-        method: 'POST',
-        headers: headers(opts.apiKey, built.betas),
-        body: JSON.stringify(built.body),
-        signal: controller.signal
-      }).then(function (res) {
-        if (!res.ok) {
-          return res.json().catch(function () { return null; }).then(function (b) { throw describe(res.status, b); });
-        }
+      function pedir(payload, jaTentou) {
+        return request(CHAT_PROXY, { apiKey: opts.apiKey, payload: payload }, controller.signal)
+          .catch(function (err) {
+            if (!vaiAdiantarTentarDeNovo(err, jaTentou)) throw err;
+            return pedir(modoSeguro(payload), true);
+          });
+      }
+
+      var promise = pedir(built.body, false).then(function (res) {
         if (handlers.onStart) handlers.onStart();
-
         var reader = res.body.getReader();
         var decoder = new TextDecoder();
         var buffer = '';
@@ -313,8 +323,6 @@
           return reader.read().then(function (r) {
             if (r.done) return finish();
             buffer += decoder.decode(r.value, { stream: true });
-
-            // SSE: eventos separados por linha em branco.
             var parts = buffer.split('\n\n');
             buffer = parts.pop();
             for (var i = 0; i < parts.length; i++) handleEvent(parts[i]);
@@ -325,67 +333,67 @@
         function handleEvent(chunk) {
           var lines = chunk.split('\n');
           for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
+            var line = lines[i].trim();
             if (line.indexOf('data:') !== 0) continue;
             var payload = line.slice(5).trim();
             if (!payload || payload === '[DONE]') continue;
 
             var ev;
-            try { ev = JSON.parse(payload); } catch (e) { continue; }
+            try { ev = JSON.parse(payload); } catch (_) { continue; }
+            if (ev.usage) usage = normalizeUsage(ev.usage);
 
-            if (ev.type === 'message_start' && ev.message && ev.message.usage) {
-              var u0 = ev.message.usage;
-              usage.input_tokens = u0.input_tokens || 0;
-              usage.cache_read_input_tokens = u0.cache_read_input_tokens || 0;
-              usage.cache_creation_input_tokens = u0.cache_creation_input_tokens || 0;
+            var choice = ev.choices && ev.choices[0];
+            if (!choice) continue;
+            if (choice.finish_reason) {
+              stopReason = choice.finish_reason === 'tool_calls' ? 'tool_use'
+                : choice.finish_reason === 'length' ? 'max_tokens'
+                : choice.finish_reason;
+            }
 
-            } else if (ev.type === 'content_block_start') {
-              coletor.iniciar(ev.index, ev.content_block);
-              if (ev.content_block && ev.content_block.type === 'tool_use' && handlers.onTool) {
-                handlers.onTool(ev.content_block.name);
-              }
+            var delta = choice.delta || {};
+            if (delta.content) {
+              fullText += delta.content;
+              if (handlers.onText) handlers.onText(delta.content, fullText);
+            }
 
-            } else if (ev.type === 'content_block_stop') {
-              coletor.fechar(ev.index);
-
-            } else if (ev.type === 'content_block_delta') {
-              var d = ev.delta || {};
-              coletor.delta(ev.index, d);
-              if (d.type === 'text_delta' && d.text) {
-                fullText += d.text;
-                if (handlers.onText) handlers.onText(d.text, fullText);
-              } else if (d.type === 'thinking_delta' && d.thinking) {
-                fullThinking += d.thinking;
-                if (handlers.onThinking) handlers.onThinking(d.thinking, fullThinking);
-              }
-
-            } else if (ev.type === 'message_delta') {
-              if (ev.usage && ev.usage.output_tokens) usage.output_tokens = ev.usage.output_tokens;
-              if (ev.delta) {
-                stopReason = ev.delta.stop_reason || stopReason;
-                stopDetails = ev.delta.stop_details || stopDetails;
-              }
-
-            } else if (ev.type === 'error') {
-              throw ApiError((ev.error && ev.error.message) || 'Erro no streaming.', (ev.error && ev.error.type) || 'stream', 0);
+            if (delta.tool_calls) {
+              delta.tool_calls.forEach(function (part) {
+                var idx = part.index || 0;
+                if (!toolCalls[idx]) toolCalls[idx] = { id: '', name: '', arguments: '' };
+                var t = toolCalls[idx];
+                if (part.id) t.id = part.id;
+                if (part.function) {
+                  if (part.function.name) {
+                    t.name = part.function.name;
+                    if (!notifiedTools[idx] && handlers.onTool) {
+                      notifiedTools[idx] = true;
+                      handlers.onTool(t.name);
+                    }
+                  }
+                  if (part.function.arguments) t.arguments += part.function.arguments;
+                }
+              });
             }
           }
         }
 
         function finish() {
-          var blocos = coletor.resultado();
+          var ferramentas = toolCalls.filter(Boolean).map(function (t) {
+            return {
+              id: t.id,
+              name: t.name,
+              arguments: t.arguments,
+              input: parseToolArgs(t.arguments)
+            };
+          });
           var info = {
-            text: fullText, thinking: fullThinking, usage: usage,
-            stopReason: stopReason, stopDetails: stopDetails,
-            blocos: blocos,
-            ferramentas: blocos.filter(function (b) { return b.type === 'tool_use'; })
+            text: fullText,
+            thinking: '',
+            usage: usage,
+            stopReason: stopReason,
+            blocos: [],
+            ferramentas: ferramentas
           };
-          if (stopReason === 'refusal') {
-            info.refused = true;
-            if (!fullText) {
-              info.text = 'Não consigo responder a esse pedido específico. Se ele foi mal interpretado, reformule com mais contexto.';
-            }
-          }
           if (handlers.onDone) handlers.onDone(info);
           return info;
         }
@@ -393,7 +401,14 @@
         return pump();
       }).catch(function (err) {
         if (err && err.name === 'AbortError') {
-          var partial = { text: fullText, thinking: fullThinking, usage: usage, aborted: true, blocos: [], ferramentas: [] };
+          var partial = {
+            text: fullText,
+            thinking: '',
+            usage: usage,
+            aborted: true,
+            blocos: [],
+            ferramentas: []
+          };
           if (handlers.onDone) handlers.onDone(partial);
           return partial;
         }
@@ -409,9 +424,13 @@
   function normalizeNetwork(err) {
     if (err && err.name === 'ApiError') return err;
     if (err && err.name === 'AbortError') return err;
-    if (!navigator.onLine) return ApiError('Você está sem conexão com a internet.', 'offline', 0);
-    return ApiError('Não foi possível falar com a API da Anthropic. Verifique sua conexão.', 'network', 0);
+    if (!navigator.onLine) return ApiError('Voce esta sem conexao com a internet.', 'offline', 0);
+    if (err && /Failed to fetch|NetworkError|Load failed/i.test(err.message || '')) {
+      return ApiError('Nao consegui acessar o servidor local. Rode "npm start" e abra pelo localhost.', 'network', 0);
+    }
+    return ApiError((err && err.message) || 'Nao foi possivel falar com a API da OpenAI.', 'network', 0);
   }
 
   global.Claude = Claude;
+  global.OpenAIKao = Claude;
 })(window);

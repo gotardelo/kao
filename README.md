@@ -1,7 +1,8 @@
-# Kao — seu TDAHzeiro
+# TDAHZEI
 
 Copiloto pessoal para quem tem TDAH, em HTML/CSS/JS puro (sem build, sem framework,
 sem dependências). Funciona no desktop e no celular, e instala como app (PWA).
+Conversa por texto **ou por voz ao vivo**, e anota tudo sozinho enquanto vocês falam.
 
 A ideia central: em vez de um chat genérico, você **cria um personagem** — classe,
 atributos, nome, avatar e voz — e ele carrega o seu contexto em toda conversa.
@@ -14,19 +15,24 @@ atributos, nome, avatar e voz — e ele carrega o seu contexto em toda conversa.
 node server.js
 ```
 
-Abra <http://localhost:5173>. Alternativas sem Node: `python -m http.server 5173` ou `npx serve`.
+Abra <http://localhost:5173>.
+
+> **O `server.js` é obrigatório**, não é só um servidor de arquivos. Ele faz o proxy
+> das chamadas para a OpenAI (`/api/openai/…`) — sem ele a conversa e a voz não funcionam.
+> Um `python -m http.server` serve as telas, mas nada responde.
 
 > **Não abra o `index.html` com duplo clique.** Em `file://` o navegador bloqueia a
-> WebCrypto e o `fetch` para a API. Precisa ser servido por HTTP.
+> WebCrypto, o microfone e o `fetch`.
 
 ### Primeiros passos
 
 1. Crie sua conta (nome, e-mail, senha).
 2. O **criador de personagem** abre sozinho: quem você é, o que te trava, e aí a classe,
    os atributos, o nome e a voz do seu TDAHzeiro. Leva uns 3 minutos.
-3. Cole sua chave da Anthropic (`sk-ant-…`) em **Chave & Modelo** e clique em **Salvar e testar**.
-   A chave sai de <https://console.anthropic.com/settings/keys>.
-4. Vá em **Conversar**.
+3. Cole sua chave da OpenAI (`sk-…`) em **Chave & Modelo** e clique em **Salvar e testar**.
+   A chave sai de <https://platform.openai.com/api-keys>.
+4. Pronto: o agente liga sozinho e começa a falar com você. O botão na barra do topo
+   desliga quando você quiser.
 
 ### O personagem
 
@@ -56,7 +62,7 @@ em **Minha vida**:
 - **Pendências** — a lista viva, com prazo e atraso
 - **Diário** — um resumo por dia
 
-E grava sozinho, conversando, através de 12 ferramentas. Você diz *"gastei 40 no ifood"*
+E grava sozinho, conversando, através de 13 ferramentas. Você diz *"gastei 40 no ifood"*
 e ele chama `registrar_gasto` na hora; diz *"terminei a intro do TCC"* e ele fecha a
 pendência. **Zero formulário** — porque o atrito de registrar é o que faz sistema de TDAH morrer.
 
@@ -69,10 +75,47 @@ pendência. **Zero formulário** — porque o atrito de registrar é o que faz s
 | `definir_orcamento` / `criar_meta` / `guardar_na_meta` | orçamento e metas |
 | `consultar_financas` | antes de opinar sobre dinheiro |
 | `anotar_diario` | fim de conversa relevante |
+| `atualizar_avatar` | você conta algo sobre sua aparência ou o que te cerca |
 
 Ao abrir o app, o **briefing** mostra o que venceu, o que atrasou e o que estourou —
 sem você precisar perguntar. Os **rituais** (*Bom dia*, *Travei*, *Fechamento*, *Grana*)
 são atalhos para as horas que mais pegam.
+
+### O seu boneco
+
+A memória não é só uma lista. Conforme ele aprende quem você é, isso vira **gente**:
+um avatar ilustrado que se monta sozinho, no painel e na página do perfil.
+
+Três camadas alimentam a ficha, nesta ordem:
+
+1. **o que você ajustou à mão** — nunca é sobrescrito
+2. **o que ele definiu conversando** — a ferramenta `atualizar_avatar`
+3. **o que dá para deduzir dos fatos** — varredura por palavra-chave na sua memória
+
+Ou seja: se você já contou que tem um gato e usa óculos, o boneco nasce de óculos e com
+o gato do lado, sem você configurar nada. E quando você diz *"cortei o cabelo bem curto"*
+no meio de uma conversa, ele muda ali.
+
+São nove traços (pele, cabelo, cor, olhos, barba, óculos, roupa, companhia, o que vive
+por perto) mais os acessórios. Tudo desenhado em SVG por camadas — nítido em qualquer
+tamanho, custo zero, muda na hora. Nenhuma imagem é gerada por API.
+
+O boneco aparece na barra do topo, nas suas mensagens do chat e no painel, ao lado do nível.
+
+**Nível e skins.** Fechar pendência, registrar coisas e conversar por voz dão XP. O nível
+libera fundos para o avatar:
+
+| Skin | Abre no nível |
+|---|---|
+| Grafite | 1 |
+| Noite | 3 |
+| Aurora | 5 |
+| Oceano | 8 |
+| Brasa | 12 |
+| Ouro puro | 18 |
+
+Em **Meu perfil** dá para ver a ficha inteira, trocar de skin, mudar a expressão do dia
+e recomeçar o avatar do zero.
 
 ### Dinheiro
 
@@ -80,39 +123,103 @@ Contas a pagar com vencimento, gastos por categoria, metas e teto mensal. O dife
 é a **projeção**: ele avisa que o mês *vai* estourar quando as contas em aberto forem
 pagas, em vez de constatar o estouro depois.
 
-### Voz
+### O agente — ele já vem ligado
 
-Usa a Web Speech API do navegador — nativa, sem custo de API e sem instalar nada:
+A proposta não é um botão de "iniciar chamada". É alguém do seu lado. Você entra na conta e
+**ele já está lá**: pede o microfone, cumprimenta você falando e diz o que está atrasado hoje.
+Daí em diante é conversa aberta — você fala, ele responde, você corta ele no meio.
 
-- **Ouvir**: botão em cada resposta; dá para deixar falando sozinho a cada resposta.
-- **Falar**: botão de microfone no campo de mensagem transcreve sua fala (Chrome/Edge).
+O botão fica na **barra do topo**, visível de qualquer página:
 
-Voz, velocidade e tom são configurados no passo **Voz** do criador.
+- **"Ativar agente"** — desligado. O microfone está solto.
+- **"<nome> está ativo"** — no ar. Mostra os minutos e quanto já custou a sessão.
+
+Clicar alterna. A escolha fica salva: se você desligar, ele continua desligado no próximo
+login; se ligar, ele volta a entrar sozinho.
+
+**Ele se levanta sozinho.** Queda de rede, sessão expirada, Wi-Fi que oscilou — ele espera
+2s, 4s, 8s… e volta, sem cumprimentar de novo. Só desiste quando o erro não tem conserto
+automático (chave recusada, microfone bloqueado no navegador) — e aí desliga o modo agente
+e escreve na tela por onde a conexão passou, em vez de ficar tentando calado.
+
+Enquanto conversam, ele continua chamando as 12 ferramentas: dizer *"gastei 40 no ifood"*
+em voz alta registra o gasto na hora. O que é falado vira mensagem na **mesma conversa** do
+chat escrito — a voz não é um modo à parte, alimenta o mesmo histórico e a mesma memória.
+
+Por baixo: o `server.js` troca sua chave `sk-` por uma chave efêmera `ek-` (válida por
+10 minutos), o navegador abre um WebRTC com o microfone, e os eventos trafegam num canal de
+dados. A chave permanente nunca sai do seu computador.
+
+Exige microfone liberado e **HTTPS ou localhost** — no IP da rede o navegador bloqueia.
+
+#### Quanto custa deixar ligado
+
+Isso importa: **o microfone aberto é cobrado por minuto mesmo quando ninguém fala.** No
+`gpt-realtime-2.1` dá cerca de **US$ 1,50 por hora só ouvindo**, mais o que ele falar.
+
+Três freios, em **Chave & Modelo**:
+
+| Freio | O que faz |
+|---|---|
+| **Teto de gasto** | agora conta o áudio também. Ao estourar, o agente desliga sozinho |
+| **Realtime 2.1 mini** | mesma conversa por cerca de um terço do preço |
+| **Descansar sozinho** | desliga depois de X minutos sem conversa; um clique acorda |
+
+De fábrica o descanso vem em **nunca** — ele fica de pé enquanto o app estiver aberto,
+que é o comportamento pedido. Se ninguém definiu teto, ele avisa uma vez ao conectar.
+
+### As outras duas vozes
+
+**Ouvir uma resposta escrita.** Botão em cada mensagem, usando a voz do próprio navegador
+(Web Speech API, custo zero). Dá para deixar falando sozinho a cada resposta. Voz,
+velocidade e tom ficam no passo **Voz** do criador.
+
+**Ditar em vez de digitar.** O microfone no campo de mensagem transcreve sua fala para o
+campo de texto (Chrome/Edge, em HTTPS ou localhost). Você revisa antes de enviar. Não
+funciona com o agente ligado — o microfone já está em uso.
 
 ---
 
 ## Usar no celular
 
 O `server.js` mostra um endereço `http://192.168.x.x:5173` para a mesma rede Wi-Fi — funciona
-para dar uma olhada, **mas em HTTP puro o navegador desliga a WebCrypto**, então login e
-cadastro não funcionam fora de `localhost`.
+para dar uma olhada, **mas em HTTP puro o navegador desliga a WebCrypto e o microfone**, então
+login, cadastro e voz não funcionam fora de `localhost`.
 
-Para uso real no celular, publique em qualquer host estático com HTTPS. É só subir a pasta:
+Como o app agora depende do proxy em `/api/openai/…`, **host estático puro não serve mais**.
+Para uso real no celular você precisa de um lugar que rode o `server.js` com HTTPS:
 
-| Host | Como |
+| Onde | Como |
 |---|---|
-| **Netlify Drop** | arraste a pasta em <https://app.netlify.com/drop> |
-| **Cloudflare Pages** | `npx wrangler pages deploy .` |
-| **GitHub Pages** | suba num repositório e ative Pages na branch |
-| **Vercel** | `npx vercel --prod` |
+| **Túnel para a sua máquina** | `npx localtunnel --port 5173` ou `cloudflared tunnel --url http://localhost:5173` |
+| **Fly.io / Render / Railway** | suba a pasta; o comando é `node server.js` e a porta vem de `PORT` |
+| **Um VPS qualquer** | `node server.js 5173` atrás de um nginx com TLS |
 
 Com HTTPS no ar, abra no celular e use "Adicionar à tela de início" — ele abre em tela cheia,
 sem barra de navegador, com ícone próprio.
 
-O service worker guarda a casca do app (HTML/CSS/JS) para abrir sem rede. As conversas em si
-sempre precisam de internet, porque falam com a API da Anthropic.
+O service worker guarda a casca do app (HTML/CSS/JS) para abrir sem rede, e nunca cacheia
+`/api/`. As conversas em si sempre precisam de internet.
 
 ---
+
+## O visual
+
+Preto de verdade (`#000`), tipografia grande e apertada, botões em pílula e o azul
+`#0071e3` como única cor de ação — a linguagem das páginas de produto da Apple, aplicada
+a um app que se usa o dia todo.
+
+As escolhas que sustentam isso, se você for mexer no CSS:
+
+- **Nada de borda para separar** — quem separa é a cor da superfície e o espaço.
+  `--panel` (`#1d1d1f`) sobre `--bg` (`#000`) já é a divisão.
+- **Peso de fonte entre 400 e 600.** O que dá hierarquia é tamanho e `letter-spacing`
+  negativo, não negrito.
+- **Corpo em 17px**, títulos em `clamp()` — o herói do painel chega a 68px.
+- **Barra lateral e topo com `backdrop-filter`**, translúcidos sobre o preto.
+- **Largura máxima de 980px** no conteúdo, como a grade do site.
+
+Os tokens estão todos no `:root` do `css/style.css`.
 
 ## Como está organizado
 
@@ -123,6 +230,7 @@ css/persona.css     criador de personagem, ficha e perfil social
 css/vida.css        briefing, listas, dinheiro e memória
 js/icons.js         ícones SVG inline
 js/persona.js       personagem, atributos, prompt gerado, voz e ditado
+js/avatar.js        o seu boneco: ficha, dedução, desenho SVG e skins
 js/wizard.js        criador de personagem em passos
 js/memoria.js       fatos, pendências e diário
 js/financas.js      contas, gastos, metas e projeção do mês
@@ -130,15 +238,18 @@ js/ferramentas.js   as 12 ferramentas que ele chama sozinho
 js/vida.js          página "Minha vida"
 js/store.js         localStorage + criptografia (AES-GCM / PBKDF2)
 js/auth.js          cadastro, login, sessão, troca de senha
-js/claude.js        cliente da API Anthropic (streaming SSE)
+js/claude.js        cliente da API OpenAI (streaming SSE, ferramentas)
+js/voz.js           o agente: Realtime API sobre WebRTC, com reconexão
 js/markdown.js      markdown → HTML com escape
 js/app.js           navegação, chat, painel, configurações
 sw.js               service worker (cache da casca do app)
 manifest.json       instalação como app
-server.js           servidor estático de desenvolvimento
-__test.html         45 testes de lógica (abra no navegador)
-__tooltest.html     83 testes de memória, finanças, teto de gasto e ferramentas
+server.js           servidor local + proxy da OpenAI (obrigatório)
+__test.html         46 testes de lógica, criptografia e formato da requisição
+__tooltest.html     123 testes de memória, finanças, teto, ferramentas e avatar
 __uitest.html       67 testes de interface ponta-a-ponta
+__agentetest.html   31 testes do agente: liga sozinho, reconecta, desliga
+__avatar_preview.html  galeria do boneco em todas as variações (só para olhar)
 ```
 
 ---
@@ -152,7 +263,8 @@ __uitest.html       67 testes de interface ponta-a-ponta
 - A chave da API é criptografada com AES-GCM. A chave de criptografia é gerada como
   **não-exportável** e vive no IndexedDB: nem pelo console dá para extrair o valor bruto dela.
 - O que o modelo responde é escapado antes de virar HTML — não há como uma resposta injetar script.
-- Nada é enviado para nenhum servidor além da própria `api.anthropic.com`.
+- Nada é enviado para nenhum servidor além do `server.js` que roda na sua máquina, e de lá
+  para a `api.openai.com`.
 
 **Não protegido (e é bom você saber):**
 
@@ -160,12 +272,14 @@ __uitest.html       67 testes de interface ponta-a-ponta
   *Exportar conversas* para fazer backup.
 - **O login é local.** Não existe servidor validando nada: quem tiver acesso ao seu navegador
   desbloqueado tem acesso ao app. É uma tranca de porta, não um cofre de banco.
-- **A chave da API fica no dispositivo** e é usada direto do navegador (header
-  `anthropic-dangerous-direct-browser-access`). Perfeito para a *sua* chave no *seu* aparelho —
-  inadequado para uma chave compartilhada entre várias pessoas.
+- **A chave da API fica no dispositivo** e passa pelo `server.js` local a cada mensagem —
+  ele não guarda nada, só repassa. Perfeito para a *sua* chave no *seu* aparelho; inadequado
+  para uma chave compartilhada entre várias pessoas.
+- **Se você expor o `server.js` na internet, o proxy fica aberto.** Ele aceita a chave que
+  vier no corpo da requisição e não tem autenticação própria. Use túnel privado, não um IP público.
 
-Se um dia isso virar multiusuário de verdade, o caminho é um backend fino que guarde a chave no
-servidor e faça proxy das chamadas. O `js/store.js` e o `js/auth.js` foram escritos isolados
+Se um dia isso virar multiusuário de verdade, o caminho é o `server.js` guardar a chave e
+exigir login antes de repassar. O `js/store.js` e o `js/auth.js` foram escritos isolados
 justamente para essa troca ser localizada.
 
 ---
@@ -174,23 +288,27 @@ justamente para essa troca ser localizada.
 
 | Modelo | Quando usar | US$ / 1M entrada | US$ / 1M saída |
 |---|---|---|---|
-| **Claude Opus 5** (padrão) | melhor equilíbrio geral | 5 | 25 |
-| **Claude Sonnet 5** | dia a dia, mais barato | 3 | 15 |
-| **Claude Haiku 4.5** | tarefas simples, alto volume | 1 | 5 |
-| **Claude Fable 5** | trabalho difícil e longo | 10 | 50 |
+| **GPT-5.6 Terra** (padrão) | melhor equilíbrio geral | 2 | 12 |
+| **GPT-5.6 Luna** | dia a dia, alto volume, check-ins | 0,20 | 1,20 |
+| **GPT-5.6 Sol** | raciocínio pesado e planejamento | 5 | 30 |
+| **GPT-5 mini** | caso sua conta ainda não tenha GPT-5.6 | 0,25 | 2 |
+
+A voz ao vivo usa o `gpt-realtime-2.1` e é cobrada por áudio, à parte — mais cara que
+texto por minuto de conversa. Dá para trocar pelo `gpt-realtime-2.1-mini` com a variável
+de ambiente `KAO_REALTIME_MODEL`.
 
 ### Teto de gasto
 
 A API é o **único** custo deste projeto — hospedagem, voz e armazenamento são todos de graça.
 Por isso ela tem freio: em **Chave & Modelo** você define um teto em US$ por mês. Ao atingir,
-o app para de enviar mensagens e explica isso no chat, até você aumentar o teto ou virar o mês.
+o app para de enviar mensagens e de abrir a voz, até você aumentar o teto ou virar o mês.
 O painel mostra o quanto já foi, com aviso aos 80%.
 
 O contador é uma **estimativa** feita a partir dos tokens de cada resposta; a cobrança real é
-a do console da Anthropic. Use como freio, não como extrato.
+a da plataforma da OpenAI. Use como freio, não como extrato.
 
-O painel soma os tokens gastos e mostra uma **estimativa** de custo. A conta real é a do
-console da Anthropic.
+O painel soma os tokens gastos e mostra uma **estimativa** de custo. A conta real é a da
+plataforma da OpenAI. O contador cobre o texto; o áudio da voz ao vivo não entra nele.
 
 Em **Chave & Modelo** dá para ajustar o esforço de raciocínio, o tamanho máximo da resposta,
 se o raciocínio aparece na tela, e a personalidade do copiloto (o system prompt — `{{nome}}`
@@ -203,10 +321,15 @@ se o raciocínio aparece na tela, e a personalidade do copiloto (o system prompt
 Com o servidor rodando, abra:
 
 - <http://localhost:5173/__test.html> — criptografia, login, storage, markdown, parser SSE e o
-  formato exato das requisições de cada modelo.
+  formato exato das requisições.
+- <http://localhost:5173/__tooltest.html> — memória, finanças, teto de gasto, as 13 ferramentas,
+  o laço de tool calling ida e volta e as três camadas do avatar.
 - <http://localhost:5173/__uitest.html> — fluxo completo pela interface: cadastro → criação do
   personagem → chave → conversa → painel → recarregar → sair. Inclui um assert de que
   nenhum erro de JavaScript ocorreu no caminho.
+- <http://localhost:5173/__agentetest.html> — o agente do começo ao fim: liga sozinho quando a
+  chave aparece, monta a sessão certa, faz a oferta WebRTC, se recupera de resposta inválida,
+  reconecta e obedece o botão de desligar.
 
 O resultado aparece na própria página.
 
@@ -216,9 +339,9 @@ O resultado aparece na própria página.
 
 Em ordem de valor para o uso com TDAH:
 
-1. **Memória entre conversas** — hoje cada conversa começa do zero. Um arquivo vivo de
-   pendências e um diário automático fariam ele lembrar do que ficou pendente ontem.
-2. **Rituais** — /manhã (o que importa hoje), /noite (fechamento), /socorro (travei agora).
-3. **Rodar sem você** — resumo pronto quando você acorda, sem precisar abrir nada.
-4. Sincronizar entre celular e desktop.
-5. Anexar arquivos e imagens; busca dentro das conversas.
+1. **Rodar sem você** — resumo pronto quando você acorda, sem precisar abrir nada.
+2. Sincronizar entre celular e desktop.
+3. Anexar arquivos e imagens; busca dentro das conversas.
+4. Interromper a voz por palavra-chave em vez de botão.
+5. Ele começar a falar sozinho na hora certa (lembrete de remédio, conta vencendo)
+   em vez de só responder.

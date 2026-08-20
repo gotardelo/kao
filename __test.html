@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — testes</title></head>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>TDAHZEI — testes</title></head>
 <body>
 <pre id="out">rodando…</pre>
 <script src="js/icons.js"></script>
@@ -16,33 +16,28 @@ function eq(name, a, b) { ok(name + ' (' + JSON.stringify(a) + ')', JSON.stringi
 var captured = null;
 var realFetch = window.fetch.bind(window);
 window.fetch = function (url, opts) {
-  captured = { url: url, headers: opts.headers, body: JSON.parse(opts.body) };
+  var enviado = JSON.parse(opts.body);
+  captured = { url: String(url), headers: opts.headers, envelope: enviado, body: enviado.payload || enviado };
+
   var sse = [
-    'event: message_start',
-    'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":123,"output_tokens":0}}}',
+    'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá "}}]}',
     '',
-    'event: content_block_delta',
-    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pensando..."}}',
+    'data: {"choices":[{"index":0,"delta":{"content":"mundo"}}]}',
     '',
-    'event: content_block_delta',
-    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Olá "}}',
+    'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
     '',
-    'event: content_block_delta',
-    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"mundo"}}',
+    'data: {"choices":[],"usage":{"prompt_tokens":150,"completion_tokens":45,"prompt_tokens_details":{"cached_tokens":27}}}',
     '',
-    'event: message_delta',
-    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":45}}',
-    '',
-    'event: message_stop',
-    'data: {"type":"message_stop"}',
+    'data: [DONE]',
     ''
   ].join('\n');
 
   var enc = new TextEncoder();
-  var chunks = [enc.encode(sse.slice(0, 260)), enc.encode(sse.slice(260))]; // corta no meio de propósito
+  var chunks = [enc.encode(sse.slice(0, 90)), enc.encode(sse.slice(90))]; // corta no meio de propósito
   var i = 0;
   return Promise.resolve({
     ok: true, status: 200,
+    json: function () { return Promise.resolve({ ok: true }); },
     body: { getReader: function () { return { read: function () {
       return Promise.resolve(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true });
     } }; } }
@@ -77,7 +72,7 @@ function run() {
       ok('senha forte reconhecida', Auth.strength('Xy9!longa-senha').score === 4);
 
       /* ============ CHAVE DA API (AES-GCM) ============ */
-      return Store.ApiKey.save(uid, 'sk-ant-api03-CHAVE-SECRETA-123');
+      return Store.ApiKey.save(uid, 'sk-proj-CHAVE-SECRETA-123');
     })
     .then(function () {
       var raw = localStorage.getItem(Store.keys.apikey(uid));
@@ -85,7 +80,7 @@ function run() {
       return Store.ApiKey.load(uid);
     })
     .then(function (key) {
-      eq('chave descriptografa igual', key, 'sk-ant-api03-CHAVE-SECRETA-123');
+      eq('chave descriptografa igual', key, 'sk-proj-CHAVE-SECRETA-123');
 
       /* ============ CONVERSAS ============ */
       var c = Store.Convs.create(uid);
@@ -113,66 +108,74 @@ function run() {
         { role: 'assistant', error: 'falhou' },
         { role: 'user', content: '  ' }
       ]);
-      eq('turnos consecutivos fundidos', api, [{ role: 'user', content: 'a\n\nb' }, { role: 'assistant', content: 'c' }]);
+      eq('descarta assistant no começo, erro e mensagem vazia', api,
+         [{ role: 'user', content: 'a' }, { role: 'user', content: 'b' }, { role: 'assistant', content: 'c' }]);
 
       /* ============ STREAMING + CORPO DA REQUISIÇÃO ============ */
-      var got = { text: '', think: '' };
+      var got = { text: '' };
       return Claude.stream(
-        { apiKey: 'sk-ant-x', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
-          system: 'sys', messages: [{ role: 'user', content: 'oi' }] },
-        { onText: function (_, all) { got.text = all; }, onThinking: function (_, all) { got.think = all; } }
+        { apiKey: 'sk-proj-x', model: 'gpt-5.6-terra', effort: 'high', maxTokens: 8000,
+          systemEstavel: 'sys', messages: [{ role: 'user', content: 'oi' }] },
+        { onText: function (_, all) { got.text = all; } }
       ).promise.then(function (info) {
         eq('SSE remonta o texto entre chunks', got.text, 'Olá mundo');
-        eq('SSE captura o raciocínio', got.think, 'pensando...');
-        eq('tokens de entrada', info.usage.input_tokens, 123);
+        eq('tokens de entrada descontam o cache', info.usage.input_tokens, 123);
+        eq('tokens lidos do cache', info.usage.cache_read_input_tokens, 27);
         eq('tokens de saída', info.usage.output_tokens, 45);
-        eq('stop_reason', info.stopReason, 'end_turn');
+        eq('finish_reason stop', info.stopReason, 'stop');
 
-        var b = captured.body, h = captured.headers;
-        eq('header de acesso do navegador', h['anthropic-dangerous-direct-browser-access'], 'true');
-        eq('versão da API', h['anthropic-version'], '2023-06-01');
-        eq('beta de fallback no header', h['anthropic-beta'], 'server-side-fallback-2026-07-01');
-        eq('opus-5: thinking adaptativo', b.thinking, { type: 'adaptive', display: 'summarized' });
-        eq('opus-5: effort em output_config', b.output_config, { effort: 'high' });
-        eq('opus-5: fallbacks', b.fallbacks, 'default');
-        ok('sem temperature (400 nos modelos novos)', !('temperature' in b));
-        ok('sem budget_tokens', JSON.stringify(b.thinking).indexOf('budget') === -1);
+        var b = captured.body;
+        eq('vai pelo proxy local', captured.url, '/api/openai/chat');
+        ok('a chave viaja no envelope, fora do payload',
+           captured.envelope.apiKey === 'sk-proj-x' && !('apiKey' in b));
+        eq('modelo enviado', b.model, 'gpt-5.6-terra');
         eq('stream ligado', b.stream, true);
-        eq('system enviado', b.system, 'sys');
+        eq('pede o usage no fim do stream', b.stream_options, { include_usage: true });
+        eq('usa max_completion_tokens', b.max_completion_tokens, 8000);
+        ok('sem max_tokens (a OpenAI recusa nos modelos novos)', !('max_tokens' in b));
+        ok('sem temperature', !('temperature' in b));
+        eq('reasoning_effort enviado', b.reasoning_effort, 'high');
+        eq('system vira a primeira mensagem', b.messages[0], { role: 'system', content: 'sys' });
+        eq('mensagem do usuário preservada', b.messages[1], { role: 'user', content: 'oi' });
       });
     })
     .then(function () {
-      /* Haiku 4.5: modelo antigo → budget_tokens, sem effort */
-      return Claude.stream({ apiKey: 'k', model: 'claude-haiku-4-5', effort: 'high', maxTokens: 8000, showThinking: true,
+      /* effort 'none' não deve virar parâmetro */
+      return Claude.stream({ apiKey: 'k', model: 'gpt-5.6-luna', effort: 'none', maxTokens: 8000,
         messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
-        var b = captured.body;
-        eq('haiku: thinking com budget', b.thinking, { type: 'enabled', budget_tokens: 3200 });
-        ok('haiku: sem output_config.effort', !b.output_config, JSON.stringify(b.output_config));
-        ok('haiku: sem fallbacks', !b.fallbacks);
+        ok('effort "none" não vai na requisição', !('reasoning_effort' in captured.body));
       });
     })
     .then(function () {
-      /* Fable 5: thinking é sempre ligado; configurá-lo dá 400 */
-      return Claude.stream({ apiKey: 'k', model: 'claude-fable-5', effort: 'max', maxTokens: 200000, showThinking: true,
+      /* teto de saída do modelo limita o pedido */
+      return Claude.stream({ apiKey: 'k', model: 'gpt-5.6-sol', effort: 'high', maxTokens: 999999,
         messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
-        var b = captured.body;
-        ok('fable: sem campo thinking', !('thinking' in b), JSON.stringify(b.thinking));
-        eq('fable: effort respeitado', b.output_config, { effort: 'max' });
-        eq('max_tokens limitado ao teto do modelo', b.max_tokens, 128000);
+        eq('max_completion_tokens limitado ao teto do modelo', captured.body.max_completion_tokens, 128000);
       });
     })
     .then(function () {
-      /* showThinking desligado: nunca mandamos type:disabled nos modelos novos */
-      return Claude.stream({ apiKey: 'k', model: 'claude-opus-5', effort: 'low', maxTokens: 4000, showThinking: false,
-        messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
-        eq('thinking sem display quando oculto', captured.body.thinking, { type: 'adaptive' });
+      /* ferramentas no formato function-calling da OpenAI */
+      return Claude.stream({ apiKey: 'k', model: 'gpt-5.6-terra', maxTokens: 4000,
+        messages: [{ role: 'user', content: 'oi' }],
+        tools: [{ name: 'registrar_gasto', description: 'grava',
+                  input_schema: { type: 'object', properties: { valor: { type: 'number' } },
+                                  required: ['valor'], additionalProperties: false } }]
+      }, {}).promise.then(function () {
+        var t = captured.body.tools[0];
+        eq('ferramenta com type function', t.type, 'function');
+        eq('nome dentro de function', t.function.name, 'registrar_gasto');
+        eq('input_schema vira parameters', t.function.parameters.required, ['valor']);
+        eq('tool_choice automático', captured.body.tool_choice, 'auto');
       });
     })
     .then(function () {
       /* ============ USO / CUSTO ============ */
       Store.Usage.reset(uid);
-      var u = Store.Usage.add(uid, 1000000, 1000000, 'claude-opus-5');
-      eq('custo opus-5 (5 + 25)', Math.round(u.cost), 30);
+      var u = Store.Usage.add(uid, 1000000, 1000000, 'gpt-5.6-terra');
+      eq('custo gpt-5.6-terra (2 + 12)', Math.round(u.cost), 14);
+      Store.Usage.reset(uid);
+      var u2 = Store.Usage.add(uid, 1000000, 1000000, 'gpt-5.6-luna');
+      ok('luna é muito mais barato que terra', u2.cost < u.cost, u2.cost + ' vs ' + u.cost);
       Auth.logout();
       ok('logout limpa a sessão', Auth.current() === null);
     })
