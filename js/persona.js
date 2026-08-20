@@ -322,6 +322,12 @@
         var achou = Voice.listar().filter(function (v) { return v.voiceURI === cfg.uri; })[0];
         if (achou) { u.voice = achou; u.lang = achou.lang; }
       }
+      if (!u.voice) {
+        var nativa = Voice.listar().filter(function (v) {
+          return /pt[-_]?BR/i.test(v.lang) && /(natural|microsoft|google)/i.test(v.name);
+        })[0] || Voice.listar().filter(function (v) { return /pt[-_]?BR/i.test(v.lang); })[0];
+        if (nativa) { u.voice = nativa; u.lang = nativa.lang; }
+      }
       if (!u.voice) u.lang = 'pt-BR';
       u.rate = cfg.rate || 1;
       u.pitch = typeof cfg.pitch === 'number' ? cfg.pitch : 1;

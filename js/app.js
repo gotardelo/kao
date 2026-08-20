@@ -13,7 +13,6 @@
     perfil: null,        // perfil social do usuário
     persona: null,       // o TDAHzeiro
     apiKey: '',
-    openaiVoiceKey: '',  // opcional: fala neural, mesmo quando o chat usa Claude
     keyStatus: 'none',   // none | ok | bad | unknown
     conv: null,
     running: null,       // { abort() } enquanto o modelo responde
@@ -128,6 +127,9 @@
   function enterApp(user, recemCriado) {
     State.user = user;
     State.config = Store.Config.get(user.id);
+    if (State.config.provider !== 'anthropic') {
+      State.config = Store.Config.set(user.id, { provider: 'anthropic', model: 'claude-sonnet-4-5' });
+    }
     State.perfil = Store.Profile.get(user.id);
     State.persona = Store.Persona.get(user.id);
     Auth.touch();
@@ -170,12 +172,6 @@
       // O agente entra junto com você: é o ponto do app.
       talvezLigarAgenteSozinho();
     });
-    Store.ApiKey.load(user.id, 'openai').then(function (key) {
-      State.openaiVoiceKey = key || '';
-      var campo = $('#openai-voice-key');
-      if (campo) campo.value = State.openaiVoiceKey;
-    });
-
     var last = Store.Convs.all(user.id)[0];
     if (last) openConv(last.id, true); else newConv(true);
   }
@@ -1605,59 +1601,13 @@
   }
 
   function suporteAgenteNavegador() {
-    var temCapturaNeural = capturaNeuralDisponivel();
-    if (!temCapturaNeural && !Persona.Ditado.disponivel()) {
+    if (!Persona.Ditado.disponivel()) {
       return { ok: false, motivo: 'Nao encontrei uma forma de ouvir neste navegador. Use Chrome ou Edge atualizado em HTTPS.' };
     }
-    if (!State.openaiVoiceKey && !Persona.Voice.disponivel()) {
+    if (!Persona.Voice.disponivel()) {
       return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
     }
     return { ok: true, motivo: '' };
-  }
-
-  function capturaNeuralDisponivel() {
-    return !!(State.openaiVoiceKey && window.isSecureContext && navigator.mediaDevices &&
-      navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-  }
-
-  function falarNatural(texto, aoTerminar) {
-    var session = State.agente.navegador;
-    var key = State.openaiVoiceKey;
-    var input = Persona.Voice.limpar(texto).slice(0, 4096);
-    if (!session || !key || !input) return Promise.resolve(false);
-    return fetch('/api/speech', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        apiKey: key,
-        input: input,
-        voice: State.config.vozRealtime || 'marin'
-      })
-    }).then(function (res) {
-      if (!res.ok) throw new Error('A voz neural nao esta disponivel para esta chave.');
-      return res.blob();
-    }).then(function (blob) {
-      return new Promise(function (resolve) {
-        var url = URL.createObjectURL(blob);
-        if (!session.ativo) { URL.revokeObjectURL(url); resolve(false); return; }
-        var audio = new Audio(url);
-        session.audio = audio;
-        session.audioUrl = url;
-        var terminou = false;
-        function fechar(ok) {
-          if (terminou) return;
-          terminou = true;
-          if (session.audio === audio) session.audio = null;
-          if (session.audioUrl === url) session.audioUrl = null;
-          URL.revokeObjectURL(url);
-          if (ok && aoTerminar) aoTerminar();
-          resolve(ok);
-        }
-        audio.onended = function () { fechar(true); };
-        audio.onerror = function () { fechar(false); };
-        audio.play().catch(function () { fechar(false); });
-      });
-    }).catch(function () { return false; });
   }
 
   function falarDoNavegador(texto) {
@@ -1672,12 +1622,8 @@
       session.ultimaFalaEm = Date.now();
       iniciarEscutaDoNavegador();
     }
-    falarNatural(texto, continuar).then(function (falou) {
-      if (falou) return;
-      if (!session.ativo) return;
-      var fallback = Persona.Voice.falar(texto, State.persona.voz, continuar);
-      if (!fallback) continuar();
-    });
+    var falou = Persona.Voice.falar(texto, State.persona.voz, continuar);
+    if (!falou) continuar();
   }
 
   function enviarFalaDoNavegador(texto) {
@@ -1854,8 +1800,7 @@
   function iniciarEscutaDoNavegador() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
-    if (capturaNeuralDisponivel() && !session.neuralIndisponivel) iniciarEscutaNeural();
-    else iniciarEscutaPorDitado();
+    iniciarEscutaPorDitado();
   }
 
   function conectarVozDoNavegador(comSaudacao) {
@@ -2263,14 +2208,11 @@
     }
     $('#api-key').placeholder = isClaude ? 'sk-ant-api03-...' : 'sk-proj-...';
     $('#cfg-provider').value = provider;
-    var campoVoz = $('#field-openai-voice-key');
-    var linhaVoz = $('#row-openai-voice-key');
-    if (campoVoz) campoVoz.classList.toggle('hidden', !isClaude);
-    if (linhaVoz) linhaVoz.classList.toggle('hidden', !isClaude);
-    if ($('#openai-voice-key')) $('#openai-voice-key').value = State.openaiVoiceKey || '';
+    var openaiOption = $('#cfg-provider option[value="openai"]');
+    if (openaiOption) openaiOption.hidden = true;
     ['#cfg-voz-realtime', '#cfg-voz-modelo'].forEach(function (sel) {
       var input = $(sel);
-      if (input) input.disabled = isClaude;
+      if (input && input.closest('.field')) input.closest('.field').classList.add('hidden');
     });
   }
 
@@ -2361,7 +2303,7 @@
       State.config = Store.Config.set(State.user.id, {
         provider: provider,
         model: models[0].id,
-        agenteAtivo: provider === 'openai' ? State.config.agenteAtivo : false
+        agenteAtivo: State.config.agenteAtivo
       });
       if (Voz.ativo() || State.agente.ligado) desligarAgente(true);
       fillModelSelects();
@@ -2387,6 +2329,13 @@
         out.textContent = 'Cole uma chave antes de salvar.';
         return;
       }
+      var detectedProvider = /^sk-ant-/.test(key) ? 'anthropic' : 'openai';
+      if (detectedProvider !== State.config.provider) {
+        var detectedModels = Claude.modelsFor(detectedProvider);
+        State.config = Store.Config.set(State.user.id, { provider: detectedProvider, model: detectedModels[0].id });
+        fillModelSelects();
+        applyConfigToForm();
+      }
       var expected = State.config.provider === 'anthropic' ? 'sk-ant-' : 'sk-';
       if (key.indexOf(expected) !== 0) {
         out.className = 'test-result show bad';
@@ -2397,7 +2346,6 @@
       btn.disabled = true;
       Store.ApiKey.save(State.user.id, State.config.provider, key).then(function () {
         State.apiKey = key;
-        if (State.config.provider === 'openai') State.openaiVoiceKey = key;
         return checkKey();
       }).then(function (ok) {
         if (ok) {
@@ -2412,47 +2360,10 @@
       if (!confirm('Remover a chave salva deste dispositivo?')) return;
       Store.ApiKey.clear(State.user.id, State.config.provider);
       State.apiKey = '';
-      if (State.config.provider === 'openai') State.openaiVoiceKey = '';
       $('#api-key').value = '';
       $('#key-result').className = 'test-result';
       setKeyStatus('none');
       toast('Chave removida.');
-    });
-
-    $('#btn-save-openai-voice-key').addEventListener('click', function () {
-      var key = $('#openai-voice-key').value.trim();
-      var out = $('#openai-voice-key-result');
-      if (!/^sk-/.test(key)) {
-        out.className = 'test-result show bad';
-        out.textContent = 'A chave OpenAI deve comecar com "sk-".';
-        return;
-      }
-      var btn = $('#btn-save-openai-voice-key');
-      btn.disabled = true;
-      Store.ApiKey.save(State.user.id, 'openai', key).then(function () {
-        State.openaiVoiceKey = key;
-        out.className = 'test-result show ok';
-        out.textContent = 'Chave de voz salva. O proximo agente vai ouvir pelo microfone neural.';
-        toast('Chave de voz salva.', 'ok');
-      }).catch(function (erro) {
-        out.className = 'test-result show bad';
-        out.textContent = (erro && erro.message) || 'Nao foi possivel salvar a chave.';
-      }).then(function () { btn.disabled = false; });
-    });
-
-    $('#btn-clear-openai-voice-key').addEventListener('click', function () {
-      if (!confirm('Remover a chave OpenAI usada para voz e microfone?')) return;
-      Store.ApiKey.clear(State.user.id, 'openai');
-      State.openaiVoiceKey = '';
-      $('#openai-voice-key').value = '';
-      $('#openai-voice-key-result').className = 'test-result';
-      toast('Chave de voz removida.');
-    });
-
-    $('[data-toggle-openai-voice-pass]').addEventListener('click', function () {
-      var input = $('#openai-voice-key');
-      input.type = input.type === 'password' ? 'text' : 'password';
-      this.setAttribute('aria-label', input.type === 'password' ? 'Mostrar chave da voz' : 'Esconder chave da voz');
     });
 
     $('#cfg-system-custom').addEventListener('change', function (e) {

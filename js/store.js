@@ -169,8 +169,8 @@
      CONFIGURAÇÕES POR USUÁRIO
      ============================================================ */
   var DEFAULT_CONFIG = {
-    provider: 'openai',
-    model: 'gpt-5.6-terra',
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-5',
     effort: 'high',
     vozRealtime: 'marin',
     agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar
