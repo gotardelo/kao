@@ -1137,6 +1137,16 @@
       ? State.config.system.replace(/\{\{nome\}\}/gi, apelido())
       : Persona.buildPrompt(State.user, State.perfil, State.persona));
 
+    if (agenteNavegadorAtivo()) {
+      partes.push(
+        '# Conversa por voz\n' +
+        'Converse como uma pessoa presente, nao como uma central de ajuda. Comece respondendo ou validando o que a pessoa disse em uma frase curta. ' +
+        'Fale em blocos de no maximo tres frases e termine com uma pergunta real, uma por vez, para abrir espaco para ela responder. ' +
+        'Puxe o proximo assunto apenas quando ele fizer sentido pelo contexto; seja curioso sem virar interrogatorio. ' +
+        'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa.'
+      );
+    }
+
     // 2. como usar as ferramentas
     if (State.config.ferramentas !== false) {
       partes.push(
@@ -1190,6 +1200,9 @@
     $('.send').disabled = true;
 
     var text = '', textoAnterior = '', thinking = '', pending = false;
+    var filaDeFala = agenteNavegadorAtivo() && usarVozNatural()
+      ? criarFilaFalaDoAgente(State.agente.navegador)
+      : null;
     var acoes = [];                       // ferramentas executadas neste turno
     var uso = { input: 0, output: 0, cacheLido: 0, cacheEscrito: 0 };
     var apiMessages = Claude.toApiMessages(conv.messages);
@@ -1224,7 +1237,7 @@
         provider: cfg.provider,
         model: cfg.model,
         effort: cfg.effort,
-        maxTokens: cfg.maxTokens,
+        maxTokens: agenteNavegadorAtivo() ? Math.min(Number(cfg.maxTokens) || 360, 360) : cfg.maxTokens,
         showThinking: cfg.showThinking,
         systemEstavel: sys.estavel,
         systemVolatil: sys.volatil,
@@ -1236,7 +1249,11 @@
           setThinking(el, all, true);
           scrollToEnd();
         },
-        onText: function (_, all) { text = textoAnterior + all; paint(); },
+        onText: function (_, all) {
+          text = textoAnterior + all;
+          if (filaDeFala) filaDeFala.receber(text);
+          paint();
+        },
         onTool: function (nome) {
           content.innerHTML = htmlAcoes() +
             (text ? MD.render(text, true) : '') +
@@ -1288,6 +1305,7 @@
 
           if (err.kind === 'auth') { setKeyStatus('bad'); }
           if (agenteNavegadorAtivo()) {
+            if (filaDeFala) filaDeFala.cancelar();
             State.agente.navegador.ocupado = false;
             setTimeout(iniciarEscutaDoNavegador, 400);
           }
@@ -1340,7 +1358,12 @@
         else Persona.Voice.falar(finalText, voz);
       }
 
-      if (!info.aborted && agenteNavegadorAtivo()) falarDoNavegador(finalText);
+      if (!info.aborted && agenteNavegadorAtivo()) {
+        if (filaDeFala) filaDeFala.finalizar(finalText);
+        else falarDoNavegador(finalText);
+      } else if (filaDeFala) {
+        filaDeFala.cancelar();
+      }
 
       if (info.stopReason === 'max_tokens' || info.stopReason === 'length') {
         toast('A resposta atingiu o limite de tokens. Aumente em Chave & Modelo.', 'bad');
@@ -1729,6 +1752,118 @@
     if (!falou) continuar();
   }
 
+  function tocarBlobDeAudio(blob, session, controller) {
+    return new Promise(function (resolve) {
+      if (!session.ativo || session.falaAbort !== controller) { resolve(false); return; }
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      session.audio = audio;
+      session.audioUrl = url;
+      var terminou = false;
+      function finalizar(saiuAudio) {
+        if (terminou) return;
+        terminou = true;
+        if (session.audio === audio) session.audio = null;
+        if (session.audioUrl === url) session.audioUrl = null;
+        URL.revokeObjectURL(url);
+        resolve(saiuAudio);
+      }
+      audio.onplay = function () { atualizarAgenteUI('ligado', 'falando'); };
+      audio.onended = function () { finalizar(true); };
+      audio.onerror = function () { finalizar(false); };
+      audio.play().catch(function () { finalizar(false); });
+    });
+  }
+
+  /** Toca os bytes assim que chegam; o caminho antigo so inicia depois do MP3 inteiro. */
+  function tocarFluxoDeAudio(resposta, session, controller) {
+    if (!resposta.body || !window.MediaSource || !MediaSource.isTypeSupported('audio/mpeg')) {
+      return resposta.blob().then(function (blob) { return tocarBlobDeAudio(blob, session, controller); });
+    }
+
+    return new Promise(function (resolve, reject) {
+      if (!session.ativo || session.falaAbort !== controller) { resolve(false); return; }
+      var media = new MediaSource();
+      var url = URL.createObjectURL(media);
+      var audio = new Audio(url);
+      var reader = resposta.body.getReader();
+      var sourceBuffer = null;
+      var fila = [];
+      var fimDoFluxo = false;
+      var terminou = false;
+      var tocando = false;
+
+      session.audio = audio;
+      session.audioUrl = url;
+
+      function finalizar(saiuAudio, erro) {
+        if (terminou) return;
+        terminou = true;
+        try { reader.cancel(); } catch (_) {}
+        if (session.audio === audio) session.audio = null;
+        if (session.audioUrl === url) session.audioUrl = null;
+        URL.revokeObjectURL(url);
+        if (erro) reject(erro);
+        else resolve(saiuAudio);
+      }
+
+      function reproduzir() {
+        if (tocando) return;
+        tocando = true;
+        audio.play().catch(function () { finalizar(false); });
+      }
+
+      function bombear() {
+        if (terminou) return;
+        if (!session.ativo || session.falaAbort !== controller || controller.signal.aborted) {
+          finalizar(false);
+          return;
+        }
+        if (sourceBuffer && fila.length && !sourceBuffer.updating) {
+          var trecho = fila.shift();
+          try {
+            sourceBuffer.appendBuffer(trecho);
+            reproduzir();
+          } catch (erro) {
+            finalizar(false, erro);
+          }
+          return;
+        }
+        if (fimDoFluxo) {
+          if (sourceBuffer && !sourceBuffer.updating && media.readyState === 'open') {
+            try { media.endOfStream(); } catch (_) {}
+          }
+          return;
+        }
+        reader.read().then(function (leitura) {
+          if (terminou) return;
+          if (leitura.done) {
+            fimDoFluxo = true;
+            bombear();
+            return;
+          }
+          var bytes = leitura.value;
+          fila.push(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+          bombear();
+        }).catch(function (erro) { finalizar(false, erro); });
+      }
+
+      media.addEventListener('sourceopen', function () {
+        if (terminou) return;
+        try {
+          sourceBuffer = media.addSourceBuffer('audio/mpeg');
+          sourceBuffer.addEventListener('updateend', bombear);
+          audio.onplay = function () { atualizarAgenteUI('ligado', 'falando'); };
+          audio.onended = function () { finalizar(true); };
+          audio.onerror = function () { finalizar(false); };
+          bombear();
+        } catch (erro) {
+          finalizar(false, erro);
+        }
+      }, { once: true });
+    });
+  }
+
   function falarComElevenLabs(texto, session, aoTerminar) {
     var controller = new AbortController();
     session.falaAbort = controller;
@@ -1746,33 +1881,109 @@
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
         throw new Error((body.error && body.error.message) || 'A voz natural nao respondeu.');
       });
-      return res.blob();
-    }).then(function (audioBlob) {
+      return tocarFluxoDeAudio(res, session, controller);
+    }).then(function (saiuAudio) {
       if (!session.ativo || session.falaAbort !== controller) return;
-      var url = URL.createObjectURL(audioBlob);
-      var audio = new Audio(url);
-      session.audio = audio;
-      session.audioUrl = url;
-      var terminou = false;
-      function finalizar(saiuAudio) {
-        if (terminou) return;
-        terminou = true;
-        if (session.audio === audio) session.audio = null;
-        if (session.audioUrl === url) session.audioUrl = null;
-        URL.revokeObjectURL(url);
-        if (session.falaAbort === controller) session.falaAbort = null;
-        aoTerminar(saiuAudio);
-      }
-      audio.onplay = function () { atualizarAgenteUI('ligado', 'falando'); };
-      audio.onended = function () { finalizar(true); };
-      audio.onerror = function () { finalizar(false); };
-      audio.play().catch(function () { finalizar(false); });
+      session.falaAbort = null;
+      aoTerminar(saiuAudio);
     }).catch(function (erro) {
       if (!session.ativo || (erro && erro.name === 'AbortError')) return;
       toast((erro && erro.message) || 'A voz natural nao respondeu.', 'bad');
       if (session.falaAbort === controller) session.falaAbort = null;
       aoTerminar(false);
     });
+  }
+
+  function criarFilaFalaDoAgente(session) {
+    var fila = [];
+    var pendente = '';
+    var lidoAte = 0;
+    var falando = false;
+    var respostaTerminou = false;
+    var cancelada = false;
+    var api = {
+      receber: receber,
+      finalizar: finalizarResposta,
+      cancelar: cancelar
+    };
+    session.filaFala = api;
+
+    function extrair(final) {
+      var partida;
+      while ((partida = pendente.match(/^([\s\S]*?[.!?…](?:\s|$))/))) {
+        var frase = partida[1].trim();
+        pendente = pendente.slice(partida[1].length);
+        if (frase) fila.push(frase);
+      }
+      if (pendente.length > 190) {
+        var corte = pendente.lastIndexOf(' ', 170);
+        if (corte < 70) corte = 170;
+        fila.push(pendente.slice(0, corte).trim());
+        pendente = pendente.slice(corte).trim();
+      }
+      if (final && pendente.trim()) {
+        fila.push(pendente.trim());
+        pendente = '';
+      }
+    }
+
+    function prepararConversa() {
+      if (!session.ativo || cancelada) return;
+      session.ouvindo = false;
+      session.ultimaFalaEm = Date.now();
+      if (window.Ambiente) Ambiente.reduzir(true);
+      atualizarAgenteUI('ligado', 'respondendo');
+    }
+
+    function proxima() {
+      if (cancelada || !session.ativo || falando) return;
+      if (!fila.length) {
+        if (!respostaTerminou) return;
+        if (session.filaFala === api) session.filaFala = null;
+        session.ocupado = false;
+        session.ultimaFalaEm = Date.now();
+        if (window.Ambiente) Ambiente.reduzir(false);
+        iniciarEscutaDoNavegador();
+        return;
+      }
+      var trecho = fila.shift();
+      if (!trecho) { proxima(); return; }
+      falando = true;
+      prepararConversa();
+      falarComElevenLabs(trecho, session, function (saiuAudio) {
+        falando = false;
+        if (!saiuAudio) fila = [];
+        proxima();
+      });
+    }
+
+    function receber(textoCompleto) {
+      if (cancelada || !textoCompleto) return;
+      var texto = String(textoCompleto);
+      if (texto.length < lidoAte) lidoAte = 0;
+      pendente += texto.slice(lidoAte);
+      lidoAte = texto.length;
+      extrair(false);
+      proxima();
+    }
+
+    function finalizarResposta(textoCompleto) {
+      if (cancelada) return;
+      receber(textoCompleto || '');
+      respostaTerminou = true;
+      extrair(true);
+      proxima();
+    }
+
+    function cancelar() {
+      cancelada = true;
+      fila = [];
+      pendente = '';
+      if (session.filaFala === api) session.filaFala = null;
+      if (session.falaAbort) session.falaAbort.abort();
+    }
+
+    return api;
   }
 
   function enviarFalaDoNavegador(texto) {
@@ -1816,7 +2027,204 @@
     });
   }
 
+  function pedirTokenDeTranscricao() {
+    return fetch('/api/speech/realtime-token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey: State.elevenLabsKey })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao foi possivel abrir a transcricao em tempo real.');
+        if (!body.token) throw new Error('A ElevenLabs nao devolveu o token da transcricao em tempo real.');
+        return String(body.token);
+      });
+    });
+  }
+
+  function pcm16EmBase64(amostras, sampleRate) {
+    var taxaAlvo = 16000;
+    var razao = sampleRate / taxaAlvo;
+    var tamanho = Math.max(1, Math.round(amostras.length / razao));
+    var pcm = new Int16Array(tamanho);
+    for (var i = 0; i < tamanho; i++) {
+      var inicio = Math.floor(i * razao);
+      var fim = Math.min(amostras.length, Math.floor((i + 1) * razao));
+      var soma = 0;
+      for (var j = inicio; j < fim; j++) soma += amostras[j];
+      var valor = soma / Math.max(1, fim - inicio);
+      valor = Math.max(-1, Math.min(1, valor));
+      pcm[i] = valor < 0 ? valor * 0x8000 : valor * 0x7fff;
+    }
+    var bytes = new Uint8Array(pcm.buffer);
+    var texto = '';
+    for (var n = 0; n < bytes.length; n += 0x8000) {
+      texto += String.fromCharCode.apply(null, bytes.subarray(n, n + 0x8000));
+    }
+    return btoa(texto);
+  }
+
+  function liberarTranscricaoRealtime(realtime) {
+    if (!realtime) return;
+    realtime.parando = true;
+    if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
+    if (realtime.processador) {
+      try { realtime.processador.disconnect(); } catch (_) {}
+      realtime.processador.onaudioprocess = null;
+    }
+    if (realtime.fonte) { try { realtime.fonte.disconnect(); } catch (_) {} }
+    if (realtime.silencio) { try { realtime.silencio.disconnect(); } catch (_) {} }
+    if (realtime.socket && realtime.socket.readyState < WebSocket.CLOSING) {
+      try { realtime.socket.close(); } catch (_) {}
+    }
+    if (realtime.contexto) realtime.contexto.close().catch(function () {});
+    if (realtime.stream) realtime.stream.getTracks().forEach(function (track) { track.stop(); });
+  }
+
+  function pararTranscricaoRealtime(session) {
+    var realtime = session && session.realtime;
+    if (!realtime) return;
+    liberarTranscricaoRealtime(realtime);
+    if (session.realtime === realtime) session.realtime = null;
+    session.realtimeAbrindo = false;
+    session.ouvindo = false;
+  }
+
+  function concluirFalaRealtime(session, realtime, texto) {
+    if (!session || !session.ativo || session.realtime !== realtime || realtime.concluido) return;
+    var fala = String(texto || '').trim();
+    if (!fala) return;
+    realtime.concluido = true;
+    pararTranscricaoRealtime(session);
+    vozMensagem('user', fala);
+    session.ocupado = true;
+    session.ultimaFalaEm = Date.now();
+    streamReply();
+  }
+
+  function usarTranscricaoEmLote(session, erro) {
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.realtimeIndisponivel) return;
+    session.realtimeIndisponivel = true;
+    session.realtimeAbrindo = false;
+    pararTranscricaoRealtime(session);
+    iniciarEscutaNeuralEmLote();
+  }
+
+  /** Scribe recebe PCM continuo e confirma a frase por VAD, sem esperar um arquivo WebM inteiro. */
+  function iniciarEscutaNeuralEmTempoReal() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.realtime || session.realtimeAbrindo || Persona.Voice.falando()) return;
+    if (!window.WebSocket || !(window.AudioContext || window.webkitAudioContext)) {
+      usarTranscricaoEmLote(session, new Error('Este navegador nao suporta a transcricao em tempo real.'));
+      return;
+    }
+    session.realtimeAbrindo = true;
+    session.ouvindo = false;
+    atualizarAgenteUI('conectando', 'abrindo transcricao em tempo real');
+
+    pedirTokenDeTranscricao().then(function (token) {
+      if (!session.ativo || session.mudo || session.ocupado) { session.realtimeAbrindo = false; return; }
+      return navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+      }).then(function (stream) {
+        if (!session.ativo || session.mudo || session.ocupado) {
+          session.realtimeAbrindo = false;
+          stream.getTracks().forEach(function (track) { track.stop(); });
+          return;
+        }
+        var endpoint = new URL('wss://api.elevenlabs.io/v1/speech-to-text/realtime');
+        endpoint.searchParams.set('model_id', 'scribe_v2_realtime');
+        endpoint.searchParams.set('token', token);
+        endpoint.searchParams.set('audio_format', 'pcm_16000');
+        endpoint.searchParams.set('language_code', 'pt');
+        endpoint.searchParams.set('commit_strategy', 'vad');
+        endpoint.searchParams.set('vad_silence_threshold_secs', '0.45');
+        endpoint.searchParams.set('vad_threshold', '0.32');
+        endpoint.searchParams.set('min_speech_duration_ms', '180');
+        endpoint.searchParams.set('min_silence_duration_ms', '120');
+        endpoint.searchParams.set('filter_background_audio', 'true');
+
+        var contexto = new (window.AudioContext || window.webkitAudioContext)();
+        var realtime = {
+          stream: stream, contexto: contexto, socket: null, fonte: null, processador: null,
+          silencio: null, parando: false, concluido: false, aberto: false, finalTimer: null
+        };
+        session.realtime = realtime;
+        session.realtimeAbrindo = false;
+        var socket = new WebSocket(endpoint.toString());
+        realtime.socket = socket;
+
+        socket.onopen = function () {
+          if (!session.ativo || session.mudo || session.ocupado || session.realtime !== realtime) {
+            liberarTranscricaoRealtime(realtime);
+            return;
+          }
+          realtime.aberto = true;
+          realtime.fonte = contexto.createMediaStreamSource(stream);
+          realtime.processador = contexto.createScriptProcessor(4096, 1, 1);
+          realtime.silencio = contexto.createGain();
+          realtime.silencio.gain.value = 0;
+          realtime.fonte.connect(realtime.processador);
+          realtime.processador.connect(realtime.silencio);
+          realtime.silencio.connect(contexto.destination);
+          realtime.processador.onaudioprocess = function (evento) {
+            if (realtime.parando || socket.readyState !== WebSocket.OPEN) return;
+            var pcm = pcm16EmBase64(evento.inputBuffer.getChannelData(0), contexto.sampleRate);
+            socket.send(JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: pcm }));
+          };
+          contexto.resume().catch(function () {});
+          session.ouvindo = true;
+          atualizarAgenteUI('ligado', 'ouvindo em tempo real');
+        };
+
+        socket.onmessage = function (evento) {
+          if (!session.ativo || session.realtime !== realtime || realtime.parando) return;
+          var dado;
+          try { dado = JSON.parse(evento.data); } catch (_) { return; }
+          var texto = String(dado.text || '').trim();
+          if (dado.message_type === 'partial_transcript') {
+            if (texto) {
+              vozParcial(texto, 'user');
+              atualizarAgenteUI('ligado', 'te ouvindo');
+            }
+            return;
+          }
+          if (dado.message_type === 'committed_transcript') {
+            concluirFalaRealtime(session, realtime, texto);
+            return;
+          }
+          if (dado.message_type === 'final_transcript' && texto) {
+            // A confirmacao costuma chegar logo depois; evita usar uma hipotese que ainda pode mudar.
+            if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
+            realtime.finalTimer = setTimeout(function () { concluirFalaRealtime(session, realtime, texto); }, 140);
+            return;
+          }
+          if (dado.message_type && /error|rate_limited|quota|throttled/i.test(dado.message_type)) {
+            usarTranscricaoEmLote(session, new Error(String(dado.error || 'A transcricao em tempo real falhou.')));
+          }
+        };
+
+        socket.onerror = function () {
+          if (!realtime.parando && !realtime.concluido) usarTranscricaoEmLote(session, new Error('A conexao da transcricao em tempo real caiu.'));
+        };
+        socket.onclose = function () {
+          if (!realtime.parando && !realtime.concluido && session.ativo) {
+            usarTranscricaoEmLote(session, new Error('A conexao da transcricao em tempo real fechou.'));
+          }
+        };
+      });
+    }).catch(function (erro) {
+      usarTranscricaoEmLote(session, erro);
+    });
+  }
+
   function iniciarEscutaNeural() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || session.realtime || session.realtimeAbrindo || Persona.Voice.falando()) return;
+    if (session.realtimeIndisponivel) iniciarEscutaNeuralEmLote();
+    else iniciarEscutaNeuralEmTempoReal();
+  }
+
+  function iniciarEscutaNeuralEmLote() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
     session.ouvindo = false;
@@ -2056,7 +2464,9 @@
     Persona.Ditado.parar();
     Persona.Voice.calar();
     if (window.Ambiente) Ambiente.reduzir(false);
+    if (session.filaFala) session.filaFala.cancelar();
     if (session.falaAbort) session.falaAbort.abort();
+    pararTranscricaoRealtime(session);
     pararCapturaNeural(session, false);
     if (session.audio) { try { session.audio.pause(); } catch (_) {} }
     if (session.audioUrl) URL.revokeObjectURL(session.audioUrl);
@@ -2071,6 +2481,7 @@
     session.mudo = !session.mudo;
     if (session.mudo) {
       Persona.Ditado.parar();
+      pararTranscricaoRealtime(session);
       pararCapturaNeural(session, false);
     }
     else iniciarEscutaDoNavegador();
