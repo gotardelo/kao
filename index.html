@@ -363,9 +363,19 @@
           </label>
           <label class="field">
             <span>ID da voz natural</span>
-            <input type="text" id="cfg-elevenlabs-voice" placeholder="ID da voz na ElevenLabs" autocomplete="off" spellcheck="false">
+            <input type="text" id="cfg-elevenlabs-voice" list="elevenlabs-voices" placeholder="ID da voz na ElevenLabs" autocomplete="off" spellcheck="false">
             <small class="hint">Use uma voz em portugues da sua biblioteca ElevenLabs. Sem isso, o app usa a voz padrao configurada.</small>
           </label>
+          <label class="field">
+            <span>Qualidade da voz natural</span>
+            <select id="cfg-elevenlabs-model">
+              <option value="eleven_turbo_v2_5">Turbo v2.5 - natural e rapido (recomendado)</option>
+              <option value="eleven_multilingual_v2">Multilingual v2 - maxima naturalidade</option>
+              <option value="eleven_flash_v2_5">Flash v2.5 - resposta mais rapida</option>
+            </select>
+            <small class="hint">Turbo e o equilibrio para conversa. Flash reduz o tempo de resposta, mas pode perder naturalidade.</small>
+          </label>
+          <datalist id="elevenlabs-voices"></datalist>
           <div class="row-btns">
             <button class="btn btn-ghost" id="btn-save-elevenlabs-key" type="button"><i data-ico="check"></i> Salvar voz natural</button>
             <button class="btn btn-ghost" id="btn-clear-elevenlabs-key" type="button">Remover chave de voz</button>

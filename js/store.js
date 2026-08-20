@@ -175,6 +175,7 @@
     effort: 'high',
     vozRealtime: 'marin',
     elevenLabsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
+    elevenLabsModel: 'eleven_turbo_v2_5',
     ambienteAtivo: false,
     ambienteVolume: 22,
     agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar
