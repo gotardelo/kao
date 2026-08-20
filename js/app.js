@@ -1224,7 +1224,8 @@
         'Converse como uma pessoa presente, nao como uma central de ajuda. Comece respondendo ou validando o que a pessoa disse em uma frase curta. ' +
         'Fale em blocos de no maximo tres frases e termine com uma pergunta real, uma por vez, para abrir espaco para ela responder. ' +
         'Puxe o proximo assunto apenas quando ele fizer sentido pelo contexto; seja curioso sem virar interrogatorio. ' +
-        'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa.'
+        'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa. ' +
+        'Uma pausa curta pode ser pensamento: espere a pessoa concluir antes de responder e nunca trate uma frase incompleta como a vez dela terminada.'
       );
     }
 
@@ -1809,6 +1810,18 @@
     return { ok: true, motivo: '' };
   }
 
+  /** Pequena guarda contra o fim do audio do agente voltar pelo microfone. */
+  function retomarEscutaComCalma(session) {
+    if (!session || !session.ativo || session.mudo || session.ocupado) return;
+    var espera = 420;
+    session.escutaLiberadaEm = Date.now() + espera;
+    if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
+    session.retomadaTimer = setTimeout(function () {
+      session.retomadaTimer = null;
+      iniciarEscutaDoNavegador();
+    }, espera);
+  }
+
   function falarDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo) return;
@@ -1818,14 +1831,14 @@
     atualizarAgenteUI('ligado', 'preparando resposta em voz');
     function continuar(saiuAudio) {
       if (!session.ativo) return;
-      if (window.Ambiente) Ambiente.reduzir(false);
+      if (window.Ambiente) Ambiente.reduzir(true);
       if (saiuAudio === false && !session.avisoVoz) {
         session.avisoVoz = true;
         toast('A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
       }
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
-      iniciarEscutaDoNavegador();
+      retomarEscutaComCalma(session);
     }
     if (usarVozNatural()) {
       falarComElevenLabs(texto, session, continuar);
@@ -2033,8 +2046,8 @@
         if (session.filaFala === api) session.filaFala = null;
         session.ocupado = false;
         session.ultimaFalaEm = Date.now();
-        if (window.Ambiente) Ambiente.reduzir(false);
-        iniciarEscutaDoNavegador();
+        if (window.Ambiente) Ambiente.reduzir(true);
+        retomarEscutaComCalma(session);
         return;
       }
       var trecho = fila.shift();
@@ -2193,6 +2206,41 @@
     session.ouvindo = false;
   }
 
+  function textoConfirmadoRealtime(realtime) {
+    return (realtime.trechosConfirmados || []).join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function adicionarTrechoConfirmadoRealtime(realtime, texto) {
+    var trecho = String(texto || '').replace(/\s+/g, ' ').trim();
+    if (!trecho) return;
+    var trechos = realtime.trechosConfirmados || (realtime.trechosConfirmados = []);
+    if (trechos[trechos.length - 1] !== trecho) trechos.push(trecho);
+  }
+
+  function textoParcialRealtime(realtime, parcial) {
+    var confirmado = textoConfirmadoRealtime(realtime);
+    var texto = String(parcial || '').replace(/\s+/g, ' ').trim();
+    if (!confirmado) return texto;
+    if (!texto || texto.toLowerCase().indexOf(confirmado.toLowerCase()) === 0) return texto || confirmado;
+    return confirmado + ' ' + texto;
+  }
+
+  function agendarFimDaVez(session, realtime, espera) {
+    if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
+    realtime.finalTimer = setTimeout(function () {
+      realtime.finalTimer = null;
+      concluirFalaRealtime(session, realtime, textoConfirmadoRealtime(realtime));
+    }, espera);
+  }
+
+  function esperaNaturalDeResposta(realtime) {
+    var texto = textoConfirmadoRealtime(realtime);
+    if (/[?!]$/.test(texto)) return 520;
+    if (/[.…]$/.test(texto)) return 700;
+    // Sem pontuacao de fim, a pessoa provavelmente esta organizando o proximo pensamento.
+    return 1050;
+  }
+
   function concluirFalaRealtime(session, realtime, texto) {
     if (!session || !session.ativo || session.realtime !== realtime || realtime.concluido) return;
     var fala = String(texto || '').trim();
@@ -2241,16 +2289,17 @@
         endpoint.searchParams.set('audio_format', 'pcm_16000');
         endpoint.searchParams.set('language_code', 'pt');
         endpoint.searchParams.set('commit_strategy', 'vad');
-        endpoint.searchParams.set('vad_silence_threshold_secs', '0.45');
+        endpoint.searchParams.set('vad_silence_threshold_secs', '0.72');
         endpoint.searchParams.set('vad_threshold', '0.32');
         endpoint.searchParams.set('min_speech_duration_ms', '180');
-        endpoint.searchParams.set('min_silence_duration_ms', '120');
+        endpoint.searchParams.set('min_silence_duration_ms', '220');
         endpoint.searchParams.set('filter_background_audio', 'true');
 
         var contexto = new (window.AudioContext || window.webkitAudioContext)();
         var realtime = {
           stream: stream, contexto: contexto, socket: null, fonte: null, processador: null,
-          silencio: null, parando: false, concluido: false, aberto: false, finalTimer: null
+          silencio: null, parando: false, concluido: false, aberto: false, finalTimer: null,
+          trechosConfirmados: [], parcial: '', finalPendente: ''
         };
         session.realtime = realtime;
         session.realtimeAbrindo = false;
@@ -2286,20 +2335,38 @@
           try { dado = JSON.parse(evento.data); } catch (_) { return; }
           var texto = String(dado.text || '').trim();
           if (dado.message_type === 'partial_transcript') {
+            if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
+            realtime.finalTimer = null;
+            realtime.finalPendente = '';
             if (texto) {
-              vozParcial(texto, 'user');
+              realtime.parcial = texto;
+              vozParcial(textoParcialRealtime(realtime, texto), 'user');
               atualizarAgenteUI('ligado', 'te ouvindo');
             }
             return;
           }
           if (dado.message_type === 'committed_transcript') {
-            concluirFalaRealtime(session, realtime, texto);
+            realtime.finalPendente = '';
+            realtime.parcial = '';
+            adicionarTrechoConfirmadoRealtime(realtime, texto);
+            vozParcial(textoConfirmadoRealtime(realtime), 'user');
+            atualizarAgenteUI('ligado', 'esperando voce concluir');
+            // Uma pausa natural entre pensamentos nao deve virar uma resposta cortando voce.
+            agendarFimDaVez(session, realtime, esperaNaturalDeResposta(realtime));
             return;
           }
           if (dado.message_type === 'final_transcript' && texto) {
-            // A confirmacao costuma chegar logo depois; evita usar uma hipotese que ainda pode mudar.
+            realtime.parcial = texto;
+            vozParcial(textoParcialRealtime(realtime, texto), 'user');
+            // Normalmente o committed chega logo depois. Este fallback cobre conexoes que so mandam final.
             if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
-            realtime.finalTimer = setTimeout(function () { concluirFalaRealtime(session, realtime, texto); }, 140);
+            realtime.finalPendente = texto;
+            realtime.finalTimer = setTimeout(function () {
+              if (!realtime.finalPendente) return;
+              adicionarTrechoConfirmadoRealtime(realtime, realtime.finalPendente);
+              realtime.finalPendente = '';
+              concluirFalaRealtime(session, realtime, textoConfirmadoRealtime(realtime));
+            }, 1000);
             return;
           }
           if (dado.message_type && /error|rate_limited|quota|throttled/i.test(dado.message_type)) {
@@ -2427,7 +2494,7 @@
           atualizarAgenteUI('ligado', 'checando sinal do microfone');
         }
         if ((!captura.detectouFala && agora - captura.inicio > 8000) ||
-            (captura.detectouFala && agora - captura.ultimoSom > 1100) ||
+            (captura.detectouFala && agora - captura.ultimoSom > 1650) ||
             agora - captura.inicio > 30000) {
           // A transcricao e a fonte de verdade. Nunca descarte uma fala so por volume baixo.
           pararCapturaNeural(session, true);
@@ -2496,6 +2563,17 @@
   function iniciarEscutaDoNavegador() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    var espera = (session.escutaLiberadaEm || 0) - Date.now();
+    if (espera > 0) {
+      if (!session.retomadaTimer) {
+        session.retomadaTimer = setTimeout(function () {
+          session.retomadaTimer = null;
+          iniciarEscutaDoNavegador();
+        }, espera);
+      }
+      return;
+    }
+    if (window.Ambiente) Ambiente.reduzir(true);
     if (usarVozNatural()) {
       iniciarEscutaNeural();
       return;
@@ -2544,7 +2622,9 @@
       inicioEm: Date.now(),
       ultimaFalaEm: Date.now(),
       microfoneConfirmado: false,
-      avisoVoz: false
+      avisoVoz: false,
+      escutaLiberadaEm: 0,
+      retomadaTimer: null
     };
     var session = State.agente.navegador;
     State.agente.descansando = false;
@@ -2570,6 +2650,7 @@
     Persona.Ditado.parar();
     Persona.Voice.calar();
     if (window.Ambiente) Ambiente.reduzir(false);
+    if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
     if (session.filaFala) session.filaFala.cancelar();
     if (session.falaAbort) session.falaAbort.abort();
     pararTranscricaoRealtime(session);
@@ -2587,6 +2668,7 @@
     session.mudo = !session.mudo;
     if (session.mudo) {
       Persona.Ditado.parar();
+      if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
       pararTranscricaoRealtime(session);
       pararCapturaNeural(session, false);
     }
