@@ -247,6 +247,18 @@ svg{display:block}
   -webkit-backdrop-filter:saturate(180%) blur(20px);
 }
 .topbar h2{font-size:15px;font-weight:500;letter-spacing:-.015em;color:var(--text)}
+.ambient-btn{
+  position:relative;border:1px solid transparent;color:var(--muted);
+  transition:color .2s,background .2s,border-color .2s,box-shadow .2s;
+}
+.ambient-btn:hover{border-color:rgba(95,233,213,.25)}
+.ambient-btn.is-active{
+  color:var(--accent-2);background:rgba(20,191,165,.14);border-color:rgba(95,233,213,.34);
+  box-shadow:0 0 0 3px rgba(20,191,165,.08);
+}
+.ambient-btn.is-active svg{animation:ambientPulse 2.8s ease-in-out infinite}
+@keyframes ambientPulse{50%{transform:scale(1.12)}}
+.ambient-field{padding-top:4px}
 /* ============================================================
    Botão do agente — ligar e desligar a conversa
 

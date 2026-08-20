@@ -102,6 +102,7 @@
     bindAppShell();
     bindChat();
     bindCopiloto();
+    bindAmbiente();
     bindSettings();
     bindProfile();
     Wizard.montar();
@@ -148,6 +149,7 @@
 
     fillModelSelects();
     applyConfigToForm();
+    renderAmbienteUI();
     renderProfile();
     renderPersona();
     renderVida();
@@ -374,12 +376,88 @@
   function doLogout() {
     if (State.running) State.running.abort();
     desligarAgente(true);
+    if (window.Ambiente) Ambiente.pausar();
     Auth.logout();
     State.user = null; State.apiKey = ''; State.conv = null;
     $('#messages').innerHTML = '';
     showAuth();
     switchTab('login');
     toast('Sessão encerrada.');
+  }
+
+  /* ---------- paisagem sonora ---------- */
+  function volumeAmbiente() {
+    var value = State.config ? Number(State.config.ambienteVolume) : 22;
+    return Math.max(0, Math.min(45, isFinite(value) ? value : 22));
+  }
+
+  function renderAmbienteUI() {
+    var btn = $('#btn-ambiente');
+    var range = $('#cfg-ambiente-volume');
+    var label = $('#cfg-ambiente-volume-label');
+    var ativo = !!(window.Ambiente && Ambiente.ativo());
+    var volume = volumeAmbiente();
+    if (btn) {
+      btn.classList.toggle('is-active', ativo);
+      btn.setAttribute('aria-pressed', ativo ? 'true' : 'false');
+      btn.setAttribute('aria-label', ativo ? 'Pausar paisagem sonora' : 'Ativar paisagem sonora');
+      btn.title = ativo ? 'Pausar paisagem sonora' : 'Ativar paisagem sonora';
+    }
+    if (range) range.value = String(volume);
+    if (label) label.textContent = volume + '%';
+  }
+
+  function salvarAmbiente(patch) {
+    if (!State.user || !State.config) return;
+    State.config = Store.Config.set(State.user.id, patch);
+    if (window.Ambiente) Ambiente.definirVolume(volumeAmbiente() / 100);
+    renderAmbienteUI();
+  }
+
+  function bindAmbiente() {
+    var btn = $('#btn-ambiente');
+    var range = $('#cfg-ambiente-volume');
+    function retomarDepoisDaInteracao(evento) {
+      if (!State.user || !State.config || !State.config.ambienteAtivo || !window.Ambiente || Ambiente.ativo()) return;
+      if (evento && evento.target && evento.target.closest && evento.target.closest('#btn-ambiente')) return;
+      Ambiente.definirVolume(volumeAmbiente() / 100);
+      Ambiente.iniciar().then(renderAmbienteUI).catch(function () {});
+    }
+    if (btn) btn.addEventListener('click', function () {
+      if (!window.Ambiente || !Ambiente.disponivel()) {
+        toast('Este navegador nao suporta paisagem sonora.', 'bad');
+        return;
+      }
+      if (Ambiente.ativo()) {
+        Ambiente.pausar().then(function () { salvarAmbiente({ ambienteAtivo: false }); });
+        return;
+      }
+      Ambiente.definirVolume(volumeAmbiente() / 100);
+      Ambiente.iniciar().then(function () {
+        salvarAmbiente({ ambienteAtivo: true });
+        toast('Paisagem sonora ativada.');
+      }).catch(function (erro) {
+        toast((erro && erro.message) || 'Nao consegui iniciar a paisagem sonora.', 'bad');
+      });
+    });
+    if (range) {
+      range.addEventListener('input', function () {
+        var volume = Math.max(0, Math.min(45, Number(range.value) || 0));
+        $('#cfg-ambiente-volume-label').textContent = volume + '%';
+        if (window.Ambiente) Ambiente.definirVolume(volume / 100);
+      });
+      range.addEventListener('change', function () { salvarAmbiente({ ambienteVolume: Number(range.value) || 0 }); });
+    }
+
+    document.addEventListener('pointerdown', retomarDepoisDaInteracao, { passive: true });
+    document.addEventListener('keydown', retomarDepoisDaInteracao);
+
+    var ultimoMovimento = 0;
+    document.addEventListener('pointermove', function (evento) {
+      if (!window.Ambiente || !Ambiente.ativo() || Date.now() - ultimoMovimento < 140) return;
+      ultimoMovimento = Date.now();
+      Ambiente.definirAltitude(1 - evento.clientY / Math.max(1, window.innerHeight));
+    }, { passive: true });
   }
 
   var TITLES = { dashboard: 'Painel', chat: 'Conversar', vida: 'Minha vida', persona: 'Meu TDAHzeiro', settings: 'Chave & Modelo', profile: 'Meu perfil' };
@@ -1627,9 +1705,11 @@
     if (!session || !session.ativo) return;
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
+    if (window.Ambiente) Ambiente.reduzir(true);
     atualizarAgenteUI('ligado', 'preparando resposta em voz');
     function continuar(saiuAudio) {
       if (!session.ativo) return;
+      if (window.Ambiente) Ambiente.reduzir(false);
       if (saiuAudio === false && !session.avisoVoz) {
         session.avisoVoz = true;
         toast('A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
@@ -1950,6 +2030,7 @@
     session.ativo = false;
     Persona.Ditado.parar();
     Persona.Voice.calar();
+    if (window.Ambiente) Ambiente.reduzir(false);
     if (session.falaAbort) session.falaAbort.abort();
     pararCapturaNeural(session, false);
     if (session.audio) { try { session.audio.pause(); } catch (_) {} }
@@ -2363,6 +2444,8 @@
     if ($('#cfg-voz-realtime')) $('#cfg-voz-realtime').value = c.vozRealtime || 'marin';
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
     if ($('#cfg-elevenlabs-voice')) $('#cfg-elevenlabs-voice').value = c.elevenLabsVoiceId || 'JBFqnCBsd6RMkjVDRZzb';
+    if ($('#cfg-ambiente-volume')) $('#cfg-ambiente-volume').value = String(volumeAmbiente());
+    if ($('#cfg-ambiente-volume-label')) $('#cfg-ambiente-volume-label').textContent = volumeAmbiente() + '%';
     if ($('#cfg-voz-ocioso')) $('#cfg-voz-ocioso').value = String(c.vozOciosoMin || 0);
     if ($('#cfg-agente-auto')) $('#cfg-agente-auto').checked = c.agenteAtivo !== false;
     $('#cfg-system-custom').checked = c.systemMode === 'custom';
@@ -2534,12 +2617,14 @@
         vozRealtime: $('#cfg-voz-realtime').value || 'marin',
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',
         elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb',
+        ambienteVolume: Math.max(0, Math.min(45, Number($('#cfg-ambiente-volume').value) || 0)),
         vozOciosoMin: parseInt($('#cfg-voz-ocioso').value, 10) || 0,
         agenteAtivo: $('#cfg-agente-auto').checked,
         systemMode: custom ? 'custom' : 'auto',
         system: $('#cfg-system').value.trim()
       });
       applyConfigToForm();
+      if (window.Ambiente) Ambiente.definirVolume(volumeAmbiente() / 100);
       renderStatus();
       toast('Preferências salvas.', 'ok');
 
