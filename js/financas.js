@@ -224,6 +224,13 @@
 
       var r = Financas.resumo(uid);
       var L = ['## Dinheiro (mês ' + r.mes + ')'];
+      var banco = global.OpenFinance ? global.OpenFinance.dados(uid) : null;
+
+      if (banco && banco.itemId) {
+        L.push('- Saldo disponivel nas contas conectadas: ' + moeda(banco.saldoDisponivel) + '.');
+        if (banco.faturaCartao) L.push('- Fatura atual dos cartoes conectados: ' + moeda(banco.faturaCartao) + '.');
+        if (banco.atualizadoEm) L.push('- Saldo sincronizado em: ' + new Date(banco.atualizadoEm).toLocaleString('pt-BR') + '.');
+      }
 
       if (r.renda) L.push('- Renda mensal: ' + moeda(r.renda));
       L.push('- Já gastou este mês: ' + moeda(r.gastos) +

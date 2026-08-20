@@ -21,7 +21,8 @@
     profile:  function (uid) { return NS + 'profile:' + uid; },
     persona:  function (uid) { return NS + 'persona:' + uid; },
     memoria:  function (uid) { return NS + 'memoria:' + uid; },
-    financas: function (uid) { return NS + 'financas:' + uid; }
+    financas: function (uid) { return NS + 'financas:' + uid; },
+    openFinance: function (uid) { return NS + 'open-finance:' + uid; }
   };
 
   /* ---------- helpers de JSON ---------- */

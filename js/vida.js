@@ -156,7 +156,29 @@
   function telaDinheiro() {
     var f = Financas.tudo(V.uid);
     var r = Financas.resumo(V.uid);
+    var banco = OpenFinance.dados(V.uid);
     var H = [];
+
+    var atualizado = banco.atualizadoEm ? new Date(banco.atualizadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    H.push('<div class="card"><div class="card-head"><h4>Dinheiro agora</h4><span class="badge' +
+      (banco.itemId ? ' ok' : '') + '">' + (banco.itemId ? 'Banco conectado' : 'Sem banco conectado') + '</span></div>' +
+      (banco.itemId
+        ? '<div class="ctx-lista"><div class="ctx-item"><small>Saldo disponivel</small><p>' + moeda(banco.saldoDisponivel) + '</p></div>' +
+          '<div class="ctx-item"><small>Fatura atual</small><p>' + moeda(banco.faturaCartao) + '</p></div>' +
+          '<div class="ctx-item"><small>Contas lidas</small><p>' + banco.contas.length + '</p></div></div>' +
+          '<p class="muted small">Atualizado ' + esc(atualizado || 'agora') + '.</p>' +
+          '<div class="row-btns"><button class="btn btn-primary" id="of-sync">' + Icons.svg('redo', 16) + ' Atualizar saldo</button>' +
+          '<button class="btn btn-ghost danger" id="of-disconnect">Desconectar banco</button></div>' +
+          (banco.contas.length ? '<div class="lista" style="margin-top:12px">' + banco.contas.map(function (conta) {
+            var nome = conta.instituicao ? conta.instituicao + ' - ' + conta.nome : conta.nome;
+            var complemento = conta.tipo === 'CREDIT' ? 'fatura' : 'disponivel';
+            return '<div class="linha"><span class="linha-ico">' + Icons.svg(conta.tipo === 'CREDIT' ? 'chip' : 'coin', 15) +
+              '</span><div class="linha-txt"><b>' + esc(nome) + '</b><small>' + esc(complemento + (conta.final ? ' final ' + conta.final : '')) +
+              '</small></div><span class="valor">' + moeda(conta.saldo) + '</span></div>';
+          }).join('') + '</div>' : '')
+        : '<p class="muted small">Conecte suas contas por Open Finance para ver o saldo e a fatura sem abrir cada banco.</p>' +
+          '<div class="row-btns"><button class="btn btn-primary" id="of-connect">' + Icons.svg('coin', 16) + ' Conectar meu banco</button></div>') +
+      '</div>');
 
     /* orçamento */
     var pct = Math.min(100, r.percentualDoLimite);
@@ -335,6 +357,37 @@
         mudou();
       });
     }
+    var conectarBanco = $('#of-connect', box);
+    if (conectarBanco) {
+      conectarBanco.addEventListener('click', function () {
+        conectarBanco.disabled = true;
+        OpenFinance.conectar(V.uid).then(mudou).catch(function (erro) {
+          conectarBanco.disabled = false;
+          alert((erro && erro.message) || 'Nao foi possivel conectar o banco.');
+        });
+      });
+    }
+    var atualizarBanco = $('#of-sync', box);
+    if (atualizarBanco) {
+      atualizarBanco.addEventListener('click', function () {
+        atualizarBanco.disabled = true;
+        OpenFinance.sincronizar(V.uid).then(mudou).catch(function (erro) {
+          atualizarBanco.disabled = false;
+          alert((erro && erro.message) || 'Nao foi possivel atualizar o saldo.');
+        });
+      });
+    }
+    var desconectarBanco = $('#of-disconnect', box);
+    if (desconectarBanco) {
+      desconectarBanco.addEventListener('click', function () {
+        if (!confirm('Desconectar e revogar o acesso deste banco?')) return;
+        desconectarBanco.disabled = true;
+        OpenFinance.desconectar(V.uid).then(mudou).catch(function (erro) {
+          desconectarBanco.disabled = false;
+          alert((erro && erro.message) || 'Nao foi possivel desconectar o banco.');
+        });
+      });
+    }
     var addConta = $('#add-conta', box);
     if (addConta) {
       addConta.addEventListener('click', function () {
@@ -409,6 +462,9 @@
       V.uid = opts.uid;
       V.user = opts.user;
       V.aoMudar = opts.aoMudar;
+      OpenFinance.status(V.uid).then(function () {
+        if (V.aba === 'dinheiro') render();
+      }).catch(function () {});
       $$('.sub-tab').forEach(function (t) {
         t.addEventListener('click', function () {
           V.aba = t.dataset.vida;
