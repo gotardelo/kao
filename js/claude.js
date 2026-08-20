@@ -5,8 +5,8 @@
 (function (global) {
   'use strict';
 
-  var CHAT_PROXY = '/api/openai/chat';
-  var TEST_PROXY = '/api/openai/test';
+  var CHAT_PROXY = '/api/chat';
+  var TEST_PROXY = '/api/test';
 
   /* Precos em US$ por 1M de tokens, conforme catalogo OpenAI. */
   var MODELS = [
@@ -16,7 +16,7 @@
       tag: 'Recomendado',
       desc: 'Equilibrio bom entre inteligencia, velocidade e custo para uso diario.',
       ctx: 1050000, maxOut: 128000,
-      price: { in: 2, out: 12 },
+      provider: 'openai', price: { in: 2, out: 12 },
       effort: true
     },
     {
@@ -25,7 +25,7 @@
       tag: 'Economico',
       desc: 'Barato e rapido para alto volume, check-ins e conversas curtas.',
       ctx: 1050000, maxOut: 128000,
-      price: { in: 0.2, out: 1.2 },
+      provider: 'openai', price: { in: 0.2, out: 1.2 },
       effort: true
     },
     {
@@ -34,7 +34,7 @@
       tag: 'Maximo',
       desc: 'Modelo frontier para raciocinio mais forte, planejamento e trabalho complexo.',
       ctx: 1050000, maxOut: 128000,
-      price: { in: 5, out: 30 },
+      provider: 'openai', price: { in: 5, out: 30 },
       effort: true
     },
     {
@@ -43,8 +43,32 @@
       tag: 'Compatibilidade',
       desc: 'Modelo GPT-5 mais antigo, util caso sua conta ainda nao tenha GPT-5.6.',
       ctx: 400000, maxOut: 128000,
-      price: { in: 0.25, out: 2 },
+      provider: 'openai', price: { in: 0.25, out: 2 },
       effort: true
+    },
+    {
+      id: 'claude-sonnet-4-5',
+      name: 'Claude Sonnet 4.5',
+      tag: 'Recomendado',
+      desc: 'Equilibrio entre raciocinio, escrita e velocidade para o uso diario.',
+      ctx: 200000, maxOut: 64000,
+      provider: 'anthropic', price: { in: 3, out: 15 }, effort: false
+    },
+    {
+      id: 'claude-haiku-4-5',
+      name: 'Claude Haiku 4.5',
+      tag: 'Economico',
+      desc: 'Rapido e economico para check-ins, listas e conversas curtas.',
+      ctx: 200000, maxOut: 64000,
+      provider: 'anthropic', price: { in: 1, out: 5 }, effort: false
+    },
+    {
+      id: 'claude-opus-4-5',
+      name: 'Claude Opus 4.5',
+      tag: 'Maximo',
+      desc: 'Maior capacidade para planejamento e tarefas complexas.',
+      ctx: 200000, maxOut: 64000,
+      provider: 'anthropic', price: { in: 5, out: 25 }, effort: false
     }
   ];
 
@@ -63,6 +87,14 @@
     return MODELS[0];
   }
 
+  function modelsFor(provider) {
+    return MODELS.filter(function (model) { return model.provider === (provider || 'openai'); });
+  }
+
+  function providerOf(model, provider) {
+    return provider || modelOf(model).provider || 'openai';
+  }
+
   function vozModelOf(id) {
     for (var i = 0; i < VOZ_MODELS.length; i++) if (VOZ_MODELS[i].id === id) return VOZ_MODELS[i];
     return VOZ_MODELS[0];
@@ -76,7 +108,8 @@
     return e;
   }
 
-  function describe(status, body) {
+  function describe(status, body, provider) {
+    var service = provider === 'anthropic' ? 'Claude' : 'OpenAI';
     var err = body && body.error;
     var type = (err && (err.type || err.code)) || '';
     var msg = (err && err.message) || '';
@@ -84,7 +117,7 @@
       case 400:
         return ApiError('Requisicao invalida: ' + (msg || 'confira modelo, chave e configuracoes.'), 'invalid_request', 400);
       case 401:
-        return ApiError('Chave da OpenAI invalida ou revogada. Confira em Chave & Modelo.', 'auth', 401);
+        return ApiError('Chave da ' + service + ' invalida ou revogada. Confira em Chave & Modelo.', 'auth', 401);
       case 403:
         return ApiError('Sua chave nao tem permissao para esse modelo ou recurso.', 'permission', 403);
       case 404:
@@ -95,7 +128,7 @@
       case 429:
         return ApiError('Limite de uso atingido. Aguarde alguns segundos e tente de novo.', 'rate_limit', 429);
       case 500: case 502: case 503:
-        return ApiError('A API da OpenAI teve um erro temporario. Tente novamente.', 'server', status);
+        return ApiError('A API da ' + service + ' teve um erro temporario. Tente novamente.', 'server', status);
       default:
         return ApiError(msg || ('Erro inesperado (HTTP ' + status + ').'), type || 'unknown', status);
     }
@@ -110,7 +143,7 @@
     }).then(function (res) {
       if (!res.ok) {
         return res.json().catch(function () { return null; })
-          .then(function (b) { throw describe(res.status, b); });
+          .then(function (b) { throw describe(res.status, b, body.provider); });
       }
       return res;
     }).catch(function (err) {
@@ -266,8 +299,11 @@
     toApiMessages: toApiMessages,
     appendToolResults: appendToolResults,
 
-    test: function (apiKey) {
-      return request(TEST_PROXY, { apiKey: apiKey }).then(function (res) {
+    modelsFor: modelsFor,
+    providerOf: providerOf,
+
+    test: function (apiKey, provider) {
+      return request(TEST_PROXY, { apiKey: apiKey, provider: provider }).then(function (res) {
         return res.json().then(function () { return { ok: true }; });
       });
     },
@@ -275,7 +311,7 @@
     send: function (opts) {
       var built = buildBody(Object.assign({}, opts, { stream: false }));
       function pedir(payload, jaTentou) {
-        return request(CHAT_PROXY, { apiKey: opts.apiKey, payload: payload }, opts.signal)
+        return request(CHAT_PROXY, { apiKey: opts.apiKey, provider: providerOf(opts.model, opts.provider), payload: payload }, opts.signal)
           .catch(function (err) {
             if (!vaiAdiantarTentarDeNovo(err, jaTentou)) throw err;
             return pedir(modoSeguro(payload), true);
@@ -305,8 +341,50 @@
       var toolCalls = [];
       var notifiedTools = {};
 
+      function handleAnthropicEvent(ev) {
+        var index = ev.index || 0;
+        if (ev.type === 'message_start' && ev.message && ev.message.usage) {
+          var started = normalizeUsage(ev.message.usage);
+          usage.input_tokens = started.input_tokens;
+          usage.cache_read_input_tokens = started.cache_read_input_tokens;
+          usage.cache_creation_input_tokens = started.cache_creation_input_tokens;
+          return;
+        }
+        if (ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'tool_use') {
+          toolCalls[index] = {
+            id: ev.content_block.id || '',
+            name: ev.content_block.name || '',
+            arguments: ''
+          };
+          if (!notifiedTools[index] && handlers.onTool) {
+            notifiedTools[index] = true;
+            handlers.onTool(toolCalls[index].name);
+          }
+          return;
+        }
+        if (ev.type === 'content_block_delta' && ev.delta) {
+          if (ev.delta.type === 'text_delta' && ev.delta.text) {
+            fullText += ev.delta.text;
+            if (handlers.onText) handlers.onText(ev.delta.text, fullText);
+          }
+          if (ev.delta.type === 'input_json_delta') {
+            if (!toolCalls[index]) toolCalls[index] = { id: '', name: '', arguments: '' };
+            toolCalls[index].arguments += ev.delta.partial_json || '';
+          }
+          return;
+        }
+        if (ev.type === 'message_delta') {
+          if (ev.usage) {
+            usage.output_tokens = ev.usage.output_tokens || 0;
+            usage.cache_read_input_tokens = ev.usage.cache_read_input_tokens || usage.cache_read_input_tokens;
+          }
+          var reason = ev.delta && ev.delta.stop_reason;
+          if (reason) stopReason = reason === 'tool_use' ? 'tool_use' : reason;
+        }
+      }
+
       function pedir(payload, jaTentou) {
-        return request(CHAT_PROXY, { apiKey: opts.apiKey, payload: payload }, controller.signal)
+        return request(CHAT_PROXY, { apiKey: opts.apiKey, provider: providerOf(opts.model, opts.provider), payload: payload }, controller.signal)
           .catch(function (err) {
             if (!vaiAdiantarTentarDeNovo(err, jaTentou)) throw err;
             return pedir(modoSeguro(payload), true);
@@ -340,6 +418,7 @@
 
             var ev;
             try { ev = JSON.parse(payload); } catch (_) { continue; }
+            if (ev.type) { handleAnthropicEvent(ev); continue; }
             if (ev.usage) usage = normalizeUsage(ev.usage);
 
             var choice = ev.choices && ev.choices[0];

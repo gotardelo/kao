@@ -13,7 +13,8 @@
     session:  NS + 'session',
     convs:    function (uid) { return NS + 'convs:' + uid; },
     config:   function (uid) { return NS + 'config:' + uid; },
-    apikey:   function (uid) { return NS + 'apikey:' + uid; },
+    apikey:   function (uid, provider) { return NS + 'apikey:' + (provider || 'openai') + ':' + uid; },
+    apikeyLegacy: function (uid) { return NS + 'apikey:' + uid; },
     usage:    function (uid) { return NS + 'usage:' + uid; },
     progress: function (uid) { return NS + 'progress:' + uid; },
     avatar:   function (uid) { return NS + 'avatar:' + uid; },
@@ -168,6 +169,7 @@
      CONFIGURAÇÕES POR USUÁRIO
      ============================================================ */
   var DEFAULT_CONFIG = {
+    provider: 'openai',
     model: 'gpt-5.6-terra',
     effort: 'high',
     vozRealtime: 'marin',
@@ -186,7 +188,7 @@
     defaults: function () { return JSON.parse(JSON.stringify(DEFAULT_CONFIG)); },
     get: function (uid_) {
       var cfg = Object.assign(Config.defaults(), read(K.config(uid_), {}));
-      if (/^claude-/i.test(cfg.model || '')) cfg.model = DEFAULT_CONFIG.model;
+      if (!cfg.provider) cfg.provider = /^claude-/i.test(cfg.model || '') ? 'anthropic' : 'openai';
       if (cfg.effort === 'max' && cfg.model === 'gpt-5-mini') cfg.effort = 'high';
       return cfg;
     },
@@ -237,21 +239,32 @@
      CHAVE DA API (criptografada)
      ============================================================ */
   var ApiKey = {
-    save: function (uid_, plain) {
-      if (!plain) { localStorage.removeItem(K.apikey(uid_)); return Promise.resolve(); }
+    save: function (uid_, provider, plain) {
+      if (arguments.length === 2) { plain = provider; provider = 'openai'; }
+      if (!plain) { localStorage.removeItem(K.apikey(uid_, provider)); return Promise.resolve(); }
       return Crypto.encrypt(plain).then(function (payload) {
         payload.hint = plain.slice(0, 12) + '…' + plain.slice(-4);
         payload.savedAt = Date.now();
-        write(K.apikey(uid_), payload);
+        write(K.apikey(uid_, provider), payload);
       });
     },
-    load: function (uid_) {
-      var payload = read(K.apikey(uid_), null);
+    load: function (uid_, provider) {
+      provider = provider || 'openai';
+      var payload = read(K.apikey(uid_, provider), null);
+      if (!payload && provider === 'openai') payload = read(K.apikeyLegacy(uid_), null);
       if (!payload) return Promise.resolve('');
       return Crypto.decrypt(payload);
     },
-    meta: function (uid_) { return read(K.apikey(uid_), null); },
-    clear: function (uid_) { localStorage.removeItem(K.apikey(uid_)); }
+    meta: function (uid_, provider) {
+      provider = provider || 'openai';
+      return read(K.apikey(uid_, provider), null) ||
+        (provider === 'openai' ? read(K.apikeyLegacy(uid_), null) : null);
+    },
+    clear: function (uid_, provider) {
+      provider = provider || 'openai';
+      localStorage.removeItem(K.apikey(uid_, provider));
+      if (provider === 'openai') localStorage.removeItem(K.apikeyLegacy(uid_));
+    }
   };
 
   /* ============================================================

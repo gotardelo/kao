@@ -268,10 +268,17 @@
       <div class="page-inner narrow">
         <div class="card">
           <div class="card-head">
-            <h4>Chave da API OpenAI</h4>
+            <h4 id="api-key-title">Chave da API OpenAI</h4>
             <span class="badge" id="key-badge">Não configurada</span>
           </div>
           <p class="muted small">Cole sua chave (<code>sk-…</code>) gerada na <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">plataforma da OpenAI</a>. Ela é criptografada com AES-GCM por uma chave que nunca sai deste dispositivo e é enviada apenas ao servidor local do TDAHZEI para chamar a OpenAI.</p>
+          <label class="field">
+            <span>Provedor de IA</span>
+            <select id="cfg-provider">
+              <option value="openai">OpenAI (GPT)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+          </label>
           <div class="input-wrap">
             <input type="password" id="api-key" placeholder="sk-proj-..." autocomplete="off" spellcheck="false">
             <button type="button" class="eye" data-toggle-pass aria-label="Mostrar chave"><i data-ico="eye"></i></button>

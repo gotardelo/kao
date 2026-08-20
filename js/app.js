@@ -155,7 +155,7 @@
     }
 
     // Carrega a chave e valida em segundo plano.
-    Store.ApiKey.load(user.id).then(function (key) {
+    Store.ApiKey.load(user.id, State.config.provider).then(function (key) {
       State.apiKey = key || '';
       renderKeyUI();
       if (State.apiKey) checkKey(true);
@@ -1135,6 +1135,7 @@
       var sys = buildSystem();
       var run = Claude.stream({
         apiKey: State.apiKey,
+        provider: cfg.provider,
         model: cfg.model,
         effort: cfg.effort,
         maxTokens: cfg.maxTokens,
@@ -1581,6 +1582,7 @@
   /** Pode conectar agora? Devolve o motivo quando não pode. */
   function impedimentoDoAgente() {
     if (!State.user) return 'entre na sua conta primeiro';
+    if (State.config.provider !== 'openai') return 'a voz ao vivo esta disponivel apenas com a API OpenAI';
     if (!State.apiKey) return 'falta a chave da API em Chave & Modelo';
     var sup = Voz.suporte();
     if (!sup.ok) return sup.motivo;
@@ -1879,13 +1881,48 @@
     fillVozSelect();
     var a = $('#cfg-model'), b = $('#model-quick');
     a.innerHTML = ''; b.innerHTML = '';
-    Claude.MODELS.forEach(function (m) {
+    Claude.modelsFor(State.config.provider).forEach(function (m) {
       var o1 = document.createElement('option');
       o1.value = m.id; o1.textContent = m.name + ' — ' + m.tag;
       a.appendChild(o1);
       var o2 = document.createElement('option');
       o2.value = m.id; o2.textContent = m.name.replace('GPT-', 'GPT ');
       b.appendChild(o2);
+    });
+  }
+
+  function providerLabel(provider) {
+    return provider === 'anthropic' ? 'Anthropic (Claude)' : 'OpenAI (GPT)';
+  }
+
+  function applyProviderUI() {
+    var provider = State.config.provider || 'openai';
+    var isClaude = provider === 'anthropic';
+    var title = $('#api-key-title');
+    var help = title && title.parentElement && title.parentElement.nextElementSibling;
+    if (title) title.textContent = 'Chave da API ' + (isClaude ? 'Claude' : 'OpenAI');
+    if (help) {
+      help.innerHTML = isClaude
+        ? 'Cole sua chave da <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic</a> (<code>sk-ant-...</code>). Ela fica criptografada neste dispositivo e segue apenas para o proxy seguro do app.'
+        : 'Cole sua chave da <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a> (<code>sk-...</code>). Ela fica criptografada neste dispositivo e segue apenas para o proxy seguro do app.';
+    }
+    $('#api-key').placeholder = isClaude ? 'sk-ant-api03-...' : 'sk-proj-...';
+    $('#cfg-provider').value = provider;
+    ['#cfg-voz-realtime', '#cfg-voz-modelo', '#cfg-voz-ocioso', '#cfg-agente-auto'].forEach(function (sel) {
+      var input = $(sel);
+      if (input) input.disabled = isClaude;
+    });
+  }
+
+  function loadProviderKey() {
+    State.apiKey = '';
+    renderKeyUI();
+    return Store.ApiKey.load(State.user.id, State.config.provider).then(function (key) {
+      State.apiKey = key || '';
+      renderKeyUI();
+      if (State.apiKey) return checkKey(true);
+      setKeyStatus('none');
+      return false;
     });
   }
 
@@ -1896,6 +1933,7 @@
 
   function applyConfigToForm() {
     var c = State.config;
+    applyProviderUI();
     $('#cfg-model').value = c.model;
     $('#model-quick').value = c.model;
     $('#cfg-effort').value = c.effort;
@@ -1932,7 +1970,7 @@
   }
 
   function renderKeyUI() {
-    var meta = Store.ApiKey.meta(State.user.id);
+    var meta = Store.ApiKey.meta(State.user.id, State.config.provider);
     $('#api-key').value = State.apiKey || '';
     if (!meta) setKeyStatus('none');
   }
@@ -1944,7 +1982,7 @@
       out.className = 'test-result show';
       out.textContent = 'Testando conexão…';
     }
-    return Claude.test(State.apiKey, State.config.model).then(function () {
+    return Claude.test(State.apiKey, State.config.provider).then(function () {
       setKeyStatus('ok');
       if (!quiet) { out.className = 'test-result show ok'; out.textContent = '✓ Chave válida e conectada.'; }
       return true;
@@ -1957,6 +1995,21 @@
   }
 
   function bindSettings() {
+    $('#cfg-provider').addEventListener('change', function (e) {
+      var provider = e.target.value;
+      var models = Claude.modelsFor(provider);
+      State.config = Store.Config.set(State.user.id, {
+        provider: provider,
+        model: models[0].id,
+        agenteAtivo: provider === 'openai' ? State.config.agenteAtivo : false
+      });
+      if (Voz.ativo() || State.agente.ligado) desligarAgente(true);
+      fillModelSelects();
+      applyConfigToForm();
+      loadProviderKey();
+      toast('Provedor alterado para ' + providerLabel(provider) + '.');
+    });
+
     $('#cfg-maxtokens').addEventListener('input', function (e) {
       $('#cfg-maxtokens-label').textContent = nf(e.target.value);
     });
@@ -1974,14 +2027,15 @@
         out.textContent = 'Cole uma chave antes de salvar.';
         return;
       }
-      if (key.indexOf('sk-') !== 0) {
+      var expected = State.config.provider === 'anthropic' ? 'sk-ant-' : 'sk-';
+      if (key.indexOf(expected) !== 0) {
         out.className = 'test-result show bad';
-        out.textContent = 'A chave da OpenAI começa com "sk-". Confira o que foi colado.';
+        out.textContent = 'A chave da ' + providerLabel(State.config.provider) + ' deve começar com "' + expected + '".';
         return;
       }
       var btn = $('#btn-save-key');
       btn.disabled = true;
-      Store.ApiKey.save(State.user.id, key).then(function () {
+      Store.ApiKey.save(State.user.id, State.config.provider, key).then(function () {
         State.apiKey = key;
         return checkKey();
       }).then(function (ok) {
@@ -1995,7 +2049,7 @@
 
     $('#btn-clear-key').addEventListener('click', function () {
       if (!confirm('Remover a chave salva deste dispositivo?')) return;
-      Store.ApiKey.clear(State.user.id);
+      Store.ApiKey.clear(State.user.id, State.config.provider);
       State.apiKey = '';
       $('#api-key').value = '';
       $('#key-result').className = 'test-result';
@@ -2010,6 +2064,7 @@
     $('#btn-save-cfg').addEventListener('click', function () {
       var custom = $('#cfg-system-custom').checked;
       State.config = Store.Config.set(State.user.id, {
+        provider: $('#cfg-provider').value,
         model: $('#cfg-model').value,
         effort: $('#cfg-effort').value,
         maxTokens: parseInt($('#cfg-maxtokens').value, 10),
