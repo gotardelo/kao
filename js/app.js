@@ -22,6 +22,7 @@
       tentativas: 0,
       timer: null,
       vigia: null,
+      navegador: null,   // agente por ditado + fala do navegador (Claude ou fallback)
       descansando: false,
       parandoDeProposito: false,
       custoSessao: 0
@@ -1201,6 +1202,10 @@
           scrollToEnd();
 
           if (err.kind === 'auth') { setKeyStatus('bad'); }
+          if (agenteNavegadorAtivo()) {
+            State.agente.navegador.ocupado = false;
+            setTimeout(iniciarEscutaDoNavegador, 400);
+          }
         }
       });
 
@@ -1242,13 +1247,15 @@
 
       // fala sozinho, se o personagem estiver configurado assim
       var voz = State.persona.voz;
-      if (!info.aborted && voz.ativa && voz.auto && Persona.Voice.disponivel()) {
+      if (!info.aborted && voz.ativa && voz.auto && Persona.Voice.disponivel() && !agenteNavegadorAtivo()) {
         var btnOuvir = $$('.msg-tool', fresh).filter(function (b) {
           return b.textContent.indexOf('Ouvir') > -1;
         })[0];
         if (btnOuvir) btnOuvir.click();
         else Persona.Voice.falar(finalText, voz);
       }
+
+      if (!info.aborted && agenteNavegadorAtivo()) falarDoNavegador(finalText);
 
       if (info.stopReason === 'max_tokens' || info.stopReason === 'length') {
         toast('A resposta atingiu o limite de tokens. Aumente em Chave & Modelo.', 'bad');
@@ -1345,11 +1352,11 @@
   }
 
   function atualizarAgenteUI(estado, detalhe) {
-    estado = estado || Voz.estado();
+    estado = estado || (agenteNavegadorAtivo() ? 'ligado' : Voz.estado());
     var btn = $('#btn-agente');
 
     if (btn) {
-      var sup = Voz.suporte();
+      var sup = usaAgenteDoNavegador() ? suporteAgenteNavegador() : Voz.suporte();
       btn.classList.remove('on', 'conectando', 'falando', 'erro');
       if (!sup.ok) {
         btn.classList.add('erro');
@@ -1445,7 +1452,9 @@
   /** Minutos no ar + quanto já custou esta sessão. */
   function agenteSubtitulo(detalhe) {
     if (detalhe && detalhe !== 'pode falar') return detalhe;
-    var min = Math.floor(Voz.minutosNoAr());
+    var min = Math.floor(agenteNavegadorAtivo()
+      ? (Date.now() - State.agente.navegador.inicioEm) / 60000
+      : Voz.minutosNoAr());
     var custo = State.agente.custoSessao;
     var partes = [];
     partes.push(min < 1 ? 'no ar' : min + ' min');
@@ -1460,7 +1469,7 @@
     var mudo = $('#btn-copilot-mudo');
     if (!panel || !btn) return;
 
-    var sup = Voz.suporte();
+    var sup = usaAgenteDoNavegador() ? suporteAgenteNavegador() : Voz.suporte();
     if (!sup.ok) {
       panel.classList.remove('live', 'connecting');
       $('#copilot-title').textContent = 'Voz ao vivo indisponível';
@@ -1495,8 +1504,9 @@
       if (mini) mini.innerHTML = Icons.svg('stop', 14) + ' Desligar';
       if (mudo) {
         mudo.hidden = false;
-        mudo.innerHTML = Icons.svg('mic', 14) + (Voz.mudo() ? ' Ligar mic' : ' Mudo');
-        mudo.classList.toggle('is-on', Voz.mudo());
+        var mudoAgora = agenteNavegadorAtivo() ? State.agente.navegador.mudo : Voz.mudo();
+        mudo.innerHTML = Icons.svg('mic', 14) + (mudoAgora ? ' Ligar mic' : ' Mudo');
+        mudo.classList.toggle('is-on', mudoAgora);
       }
       return;
     }
@@ -1579,11 +1589,136 @@
 
   /* ---------------- ligar / desligar ---------------- */
 
+  function usaAgenteDoNavegador() {
+    return !!State.config;
+  }
+
+  function agenteNavegadorAtivo() {
+    return !!(State.agente.navegador && State.agente.navegador.ativo);
+  }
+
+  function suporteAgenteNavegador() {
+    if (!Persona.Ditado.disponivel()) {
+      return { ok: false, motivo: 'O agente por voz precisa do ditado do navegador em HTTPS. Use Chrome ou Edge atualizado.' };
+    }
+    if (!Persona.Voice.disponivel()) {
+      return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
+    }
+    return { ok: true, motivo: '' };
+  }
+
+  function falarDoNavegador(texto) {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo) return;
+    session.ouvindo = false;
+    session.ultimaFalaEm = Date.now();
+    atualizarAgenteUI('ligado', 'respondendo');
+    var falou = Persona.Voice.falar(texto, State.persona.voz, function () {
+      if (!session.ativo) return;
+      session.ocupado = false;
+      session.ultimaFalaEm = Date.now();
+      iniciarEscutaDoNavegador();
+    });
+    if (!falou) {
+      session.ocupado = false;
+      iniciarEscutaDoNavegador();
+    }
+  }
+
+  function enviarFalaDoNavegador(texto) {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || !texto) return;
+    session.ocupado = true;
+    session.ultimaFalaEm = Date.now();
+    vozMensagem('user', texto);
+    streamReply();
+  }
+
+  function iniciarEscutaDoNavegador() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    session.ouvindo = true;
+    atualizarAgenteUI('ligado', 'pode falar');
+    var abriu = Persona.Ditado.iniciar(function (texto) {
+      if (session.ativo && texto) vozParcial(texto, 'user');
+    }, function (texto, erroMsg) {
+      session.ouvindo = false;
+      if (!session.ativo || session.mudo) return;
+      var fala = String(texto || '').trim();
+      if (fala) {
+        enviarFalaDoNavegador(fala);
+        return;
+      }
+      if (erroMsg && !/ouvi nada/i.test(erroMsg)) toast(erroMsg, 'bad');
+      setTimeout(iniciarEscutaDoNavegador, 250);
+    });
+    if (!abriu) {
+      session.ativo = false;
+      State.agente.ligado = false;
+      atualizarAgenteUI('off', 'nao consegui abrir o microfone');
+      toast('Nao consegui abrir o microfone do navegador.', 'bad');
+    }
+  }
+
+  function conectarVozDoNavegador(comSaudacao) {
+    if (agenteNavegadorAtivo()) return;
+    var sup = suporteAgenteNavegador();
+    if (!sup.ok) {
+      mostrarDiagnostico(sup.motivo);
+      atualizarAgenteUI('off', sup.motivo);
+      return;
+    }
+    State.agente.navegador = {
+      ativo: true,
+      ouvindo: false,
+      ocupado: false,
+      mudo: false,
+      inicioEm: Date.now(),
+      ultimaFalaEm: Date.now()
+    };
+    State.agente.descansando = false;
+    limparDiagnostico();
+    atualizarAgenteUI('ligado', 'preparando o microfone');
+    if (comSaudacao !== false) {
+      State.agente.navegador.ocupado = true;
+      falarDoNavegador('Oi, ' + apelido() + '. Estou aqui com voce. Qual e a unica coisa que importa agora?');
+    } else {
+      iniciarEscutaDoNavegador();
+    }
+  }
+
+  function encerrarVozDoNavegador() {
+    var session = State.agente.navegador;
+    if (!session) return;
+    session.ativo = false;
+    Persona.Ditado.parar();
+    Persona.Voice.calar();
+    var parcial = $('#voz-parcial');
+    if (parcial) parcial.remove();
+    State.agente.navegador = null;
+  }
+
+  function alternarMudoDoNavegador() {
+    var session = State.agente.navegador;
+    if (!session) return false;
+    session.mudo = !session.mudo;
+    if (session.mudo) Persona.Ditado.parar();
+    else iniciarEscutaDoNavegador();
+    atualizarAgenteUI('ligado', session.mudo ? 'microfone mudo' : 'pode falar');
+    return session.mudo;
+  }
+
   /** Pode conectar agora? Devolve o motivo quando não pode. */
   function impedimentoDoAgente() {
     if (!State.user) return 'entre na sua conta primeiro';
-    if (State.config.provider !== 'openai') return 'a voz ao vivo esta disponivel apenas com a API OpenAI';
     if (!State.apiKey) return 'falta a chave da API em Chave & Modelo';
+    var t = Store.Usage.teto(State.user.id, State.config.tetoMensalUSD);
+    if (t.estourou) return 'o teto de ' + money(t.teto) + ' deste mes estourou';
+    if (usaAgenteDoNavegador()) {
+      var browserSupport = suporteAgenteNavegador();
+      if (!browserSupport.ok) return browserSupport.motivo;
+      return '';
+    }
     var sup = Voz.suporte();
     if (!sup.ok) return sup.motivo;
     var t = Store.Usage.teto(State.user.id, State.config.tetoMensalUSD);
@@ -1592,6 +1727,17 @@
   }
 
   function conectarVoz(comSaudacao) {
+    var bloqueio = impedimentoDoAgente();
+    if (bloqueio) {
+      pararReconexao();
+      mostrarDiagnostico('Nao consigo ligar o agente: ' + bloqueio + '.');
+      atualizarAgenteUI('off', '');
+      return;
+    }
+    if (usaAgenteDoNavegador()) {
+      conectarVozDoNavegador(comSaudacao);
+      return;
+    }
     if (Voz.ativo()) return;
 
     var impede = impedimentoDoAgente();
@@ -1752,14 +1898,15 @@
       State.config = Store.Config.get(State.user.id);
       if ($('#cfg-agente-auto')) $('#cfg-agente-auto').checked = false;
     }
-    Voz.encerrar();
+    if (agenteNavegadorAtivo()) encerrarVozDoNavegador();
+    else Voz.encerrar();
     limparDiagnostico();
     atualizarAgenteUI('off', '');
     if (!silencioso) toast('Agente desligado. O microfone foi solto.');
   }
 
   function alternarAgente() {
-    if (State.agente.ligado || Voz.ativo()) desligarAgente();
+    if (State.agente.ligado || Voz.ativo() || agenteNavegadorAtivo()) desligarAgente();
     else ligarAgente();
   }
 
@@ -1781,15 +1928,18 @@
 
       // descanso por silêncio, se você pediu
       var limite = parseInt(State.config.vozOciosoMin, 10) || 0;
-      if (limite > 0 && Voz.ligado() && Voz.ocioso() > limite * 60) {
+      var ocioso = agenteNavegadorAtivo()
+        ? (Date.now() - State.agente.navegador.ultimaFalaEm) / 1000
+        : Voz.ocioso();
+      if (limite > 0 && (Voz.ligado() || agenteNavegadorAtivo()) && ocioso > limite * 60) {
         State.agente.parandoDeProposito = true;
         State.agente.descansando = true;
-        Voz.encerrar();
+        if (agenteNavegadorAtivo()) encerrarVozDoNavegador(); else Voz.encerrar();
         toast(nomeP() + ' foi descansar depois de ' + limite + ' min em silêncio. Clique para acordar.');
         return;
       }
 
-      if (Voz.ligado()) atualizarAgenteUI('ligado', '');
+      if (Voz.ligado() || agenteNavegadorAtivo()) atualizarAgenteUI('ligado', '');
     }, 10000);
   }
 
@@ -1802,7 +1952,7 @@
     if (!State.user || !State.config) return;
     if (State.config.agenteAtivo === false) { atualizarAgenteUI('off', ''); return; }
     if (!State.apiKey) { atualizarAgenteUI('off', ''); return; }
-    if (Voz.ativo() || State.agente.ligado) return;
+    if (Voz.ativo() || agenteNavegadorAtivo() || State.agente.ligado) return;
     if (!State.perfil.onboarded) return;          // primeiro cria o personagem
     ligarAgente(true);
   }
@@ -1818,20 +1968,21 @@
     if (mini) mini.addEventListener('click', alternarAgente);
     if (mudo) {
       mudo.addEventListener('click', function () {
-        Voz.alternarMudo();
-        atualizarAgenteUI(Voz.estado(), '');
+        if (agenteNavegadorAtivo()) alternarMudoDoNavegador(); else Voz.alternarMudo();
+        atualizarAgenteUI(agenteNavegadorAtivo() ? 'ligado' : Voz.estado(), '');
       });
     }
 
     // Fechar a aba não pode deixar o microfone ligado.
     window.addEventListener('beforeunload', function () {
       State.agente.parandoDeProposito = true;
-      if (Voz.ativo()) Voz.encerrar();
+      if (agenteNavegadorAtivo()) encerrarVozDoNavegador();
+      else if (Voz.ativo()) Voz.encerrar();
     });
 
     // Voltar de um sono do sistema / queda de rede: religa na hora.
     window.addEventListener('online', function () {
-      if (State.agente.ligado && !Voz.ativo()) { State.agente.tentativas = 0; conectarVoz(false); }
+      if (State.agente.ligado && !Voz.ativo() && !agenteNavegadorAtivo()) { State.agente.tentativas = 0; conectarVoz(false); }
     });
 
     atualizarAgenteUI('off', '');
@@ -1908,7 +2059,7 @@
     }
     $('#api-key').placeholder = isClaude ? 'sk-ant-api03-...' : 'sk-proj-...';
     $('#cfg-provider').value = provider;
-    ['#cfg-voz-realtime', '#cfg-voz-modelo', '#cfg-voz-ocioso', '#cfg-agente-auto'].forEach(function (sel) {
+    ['#cfg-voz-realtime', '#cfg-voz-modelo'].forEach(function (sel) {
       var input = $(sel);
       if (input) input.disabled = isClaude;
     });
