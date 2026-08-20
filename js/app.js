@@ -13,6 +13,7 @@
     perfil: null,        // perfil social do usuário
     persona: null,       // o TDAHzeiro
     apiKey: '',
+    elevenLabsKey: '',
     keyStatus: 'none',   // none | ok | bad | unknown
     conv: null,
     running: null,       // { abort() } enquanto o modelo responde
@@ -171,6 +172,10 @@
       }
       // O agente entra junto com você: é o ponto do app.
       talvezLigarAgenteSozinho();
+    });
+    Store.ApiKey.load(user.id, 'elevenlabs').then(function (key) {
+      State.elevenLabsKey = key || '';
+      renderElevenLabsKeyUI();
     });
     var last = Store.Convs.all(user.id)[0];
     if (last) openConv(last.id, true); else newConv(true);
@@ -1600,14 +1605,18 @@
     return !!(State.agente.navegador && State.agente.navegador.ativo);
   }
 
+  function usarVozNatural() {
+    return !!String(State.elevenLabsKey || '').trim();
+  }
+
   function suporteAgenteNavegador() {
-    if (!Persona.Ditado.disponivel()) {
+    if (!usarVozNatural() && !Persona.Ditado.disponivel()) {
       return { ok: false, motivo: 'Nao encontrei uma forma de ouvir neste navegador. Use Chrome ou Edge atualizado em HTTPS.' };
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return { ok: false, motivo: 'Este navegador nao permite acesso seguro ao microfone.' };
     }
-    if (!Persona.Voice.disponivel()) {
+    if (!usarVozNatural() && !Persona.Voice.disponivel()) {
       return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
     }
     return { ok: true, motivo: '' };
@@ -1629,11 +1638,60 @@
       session.ultimaFalaEm = Date.now();
       iniciarEscutaDoNavegador();
     }
+    if (usarVozNatural()) {
+      falarComElevenLabs(texto, session, continuar);
+      return;
+    }
     var falou = Persona.Voice.falar(texto, State.persona.voz, continuar, function (estado) {
       if (!session.ativo) return;
       if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
     });
     if (!falou) continuar();
+  }
+
+  function falarComElevenLabs(texto, session, aoTerminar) {
+    var controller = new AbortController();
+    session.falaAbort = controller;
+    fetch('/api/speech/synthesize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        apiKey: State.elevenLabsKey,
+        text: Persona.Voice.limpar(texto),
+        voiceId: State.config.elevenLabsVoiceId
+      }),
+      signal: controller.signal
+    }).then(function (res) {
+      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
+        throw new Error((body.error && body.error.message) || 'A voz natural nao respondeu.');
+      });
+      return res.blob();
+    }).then(function (audioBlob) {
+      if (!session.ativo || session.falaAbort !== controller) return;
+      var url = URL.createObjectURL(audioBlob);
+      var audio = new Audio(url);
+      session.audio = audio;
+      session.audioUrl = url;
+      var terminou = false;
+      function finalizar(saiuAudio) {
+        if (terminou) return;
+        terminou = true;
+        if (session.audio === audio) session.audio = null;
+        if (session.audioUrl === url) session.audioUrl = null;
+        URL.revokeObjectURL(url);
+        if (session.falaAbort === controller) session.falaAbort = null;
+        aoTerminar(saiuAudio);
+      }
+      audio.onplay = function () { atualizarAgenteUI('ligado', 'falando'); };
+      audio.onended = function () { finalizar(true); };
+      audio.onerror = function () { finalizar(false); };
+      audio.play().catch(function () { finalizar(false); });
+    }).catch(function (erro) {
+      if (!session.ativo || (erro && erro.name === 'AbortError')) return;
+      toast((erro && erro.message) || 'A voz natural nao respondeu.', 'bad');
+      if (session.falaAbort === controller) session.falaAbort = null;
+      aoTerminar(false);
+    });
   }
 
   function enviarFalaDoNavegador(texto) {
@@ -1668,9 +1726,8 @@
   function transcreverAudio(blob) {
     var dados = new FormData();
     dados.append('file', blob, 'fala.webm');
-    dados.append('apiKey', State.openaiVoiceKey);
-    dados.append('language', 'pt');
-    return fetch('/api/transcribe', { method: 'POST', body: dados }).then(function (res) {
+    dados.append('apiKey', State.elevenLabsKey);
+    return fetch('/api/speech/transcribe', { method: 'POST', body: dados }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao foi possivel transcrever o audio.');
         return String(body.text || '').trim();
@@ -1681,8 +1738,8 @@
   function iniciarEscutaNeural() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
-    session.ouvindo = true;
-    atualizarAgenteUI('ligado', 'ouvindo');
+    session.ouvindo = false;
+    atualizarAgenteUI('conectando', 'abrindo microfone natural');
     navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     }).then(function (stream) {
@@ -1690,6 +1747,8 @@
         stream.getTracks().forEach(function (track) { track.stop(); });
         return;
       }
+      session.ouvindo = true;
+      atualizarAgenteUI('ligado', 'ouvindo');
       var tipos = ['audio/webm;codecs=opus', 'audio/webm'];
       var tipo = tipos.filter(function (item) { return MediaRecorder.isTypeSupported(item); })[0];
       var recorder = tipo ? new MediaRecorder(stream, { mimeType: tipo }) : new MediaRecorder(stream);
@@ -1818,6 +1877,10 @@
   function iniciarEscutaDoNavegador() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    if (usarVozNatural()) {
+      iniciarEscutaNeural();
+      return;
+    }
     iniciarEscutaPorDitado();
   }
 
@@ -1887,6 +1950,7 @@
     session.ativo = false;
     Persona.Ditado.parar();
     Persona.Voice.calar();
+    if (session.falaAbort) session.falaAbort.abort();
     pararCapturaNeural(session, false);
     if (session.audio) { try { session.audio.pause(); } catch (_) {} }
     if (session.audioUrl) URL.revokeObjectURL(session.audioUrl);
@@ -2298,6 +2362,7 @@
     $('#cfg-ferramentas').checked = c.ferramentas !== false;
     if ($('#cfg-voz-realtime')) $('#cfg-voz-realtime').value = c.vozRealtime || 'marin';
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
+    if ($('#cfg-elevenlabs-voice')) $('#cfg-elevenlabs-voice').value = c.elevenLabsVoiceId || 'JBFqnCBsd6RMkjVDRZzb';
     if ($('#cfg-voz-ocioso')) $('#cfg-voz-ocioso').value = String(c.vozOciosoMin || 0);
     if ($('#cfg-agente-auto')) $('#cfg-agente-auto').checked = c.agenteAtivo !== false;
     $('#cfg-system-custom').checked = c.systemMode === 'custom';
@@ -2326,6 +2391,16 @@
     var meta = Store.ApiKey.meta(State.user.id, State.config.provider);
     $('#api-key').value = State.apiKey || '';
     if (!meta) setKeyStatus('none');
+  }
+
+  function renderElevenLabsKeyUI() {
+    var input = $('#elevenlabs-key');
+    var result = $('#elevenlabs-result');
+    if (!input || !State.user) return;
+    input.value = State.elevenLabsKey || '';
+    if (!result) return;
+    result.className = State.elevenLabsKey ? 'test-result show ok' : 'test-result';
+    result.textContent = State.elevenLabsKey ? 'Voz natural pronta para o proximo agente.' : '';
   }
 
   function checkKey(quiet) {
@@ -2417,6 +2492,31 @@
       toast('Chave removida.');
     });
 
+    $('#btn-save-elevenlabs-key').addEventListener('click', function () {
+      var key = $('#elevenlabs-key').value.trim();
+      var out = $('#elevenlabs-result');
+      if (key.length < 12) {
+        out.className = 'test-result show bad';
+        out.textContent = 'Cole uma chave valida da ElevenLabs.';
+        return;
+      }
+      Store.ApiKey.save(State.user.id, 'elevenlabs', key).then(function () {
+        State.elevenLabsKey = key;
+        State.config = Store.Config.set(State.user.id, {
+          elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb'
+        });
+        renderElevenLabsKeyUI();
+        toast('Voz natural salva. Ligue o agente para testar.', 'ok');
+      });
+    });
+
+    $('#btn-clear-elevenlabs-key').addEventListener('click', function () {
+      Store.ApiKey.clear(State.user.id, 'elevenlabs');
+      State.elevenLabsKey = '';
+      renderElevenLabsKeyUI();
+      toast('Chave de voz removida.');
+    });
+
     $('#cfg-system-custom').addEventListener('change', function (e) {
       $('#field-system').classList.toggle('hidden', !e.target.checked);
     });
@@ -2433,6 +2533,7 @@
         tetoMensalUSD: Math.max(0, parseFloat($('#cfg-teto').value) || 0),
         vozRealtime: $('#cfg-voz-realtime').value || 'marin',
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',
+        elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb',
         vozOciosoMin: parseInt($('#cfg-voz-ocioso').value, 10) || 0,
         agenteAtivo: $('#cfg-agente-auto').checked,
         systemMode: custom ? 'custom' : 'auto',

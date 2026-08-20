@@ -330,6 +330,24 @@
             <small class="hint">O agente funciona com GPT ou Claude. Para a fala neural mais natural, ele usa uma chave OpenAI salva neste dispositivo, mesmo que o texto venha do Claude.</small>
           </label>
           <label class="field">
+            <span>Chave da ElevenLabs para voz natural</span>
+            <div class="input-wrap">
+              <input type="password" id="elevenlabs-key" placeholder="Cole sua chave da ElevenLabs" autocomplete="off" spellcheck="false">
+              <button type="button" class="eye" data-toggle-pass aria-label="Mostrar chave"><i data-ico="eye"></i></button>
+            </div>
+            <small class="hint">Opcional. O Claude continua sendo o cerebro; a ElevenLabs so transcreve sua fala e responde com uma voz natural.</small>
+          </label>
+          <label class="field">
+            <span>ID da voz natural</span>
+            <input type="text" id="cfg-elevenlabs-voice" placeholder="ID da voz na ElevenLabs" autocomplete="off" spellcheck="false">
+            <small class="hint">Use uma voz em portugues da sua biblioteca ElevenLabs. Sem isso, o app usa a voz padrao configurada.</small>
+          </label>
+          <div class="row-btns">
+            <button class="btn btn-ghost" id="btn-save-elevenlabs-key" type="button"><i data-ico="check"></i> Salvar voz natural</button>
+            <button class="btn btn-ghost" id="btn-clear-elevenlabs-key" type="button">Remover chave de voz</button>
+          </div>
+          <p class="test-result" id="elevenlabs-result"></p>
+          <label class="field">
             <span>Modelo de voz</span>
             <select id="cfg-voz-modelo">
               <option value="gpt-realtime-2.1">Realtime 2.1 — melhor conversa (US$ 32/64 por 1M de áudio)</option>

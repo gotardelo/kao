@@ -174,6 +174,7 @@
     model: 'claude-sonnet-4-5',
     effort: 'high',
     vozRealtime: 'marin',
+    elevenLabsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
     agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar
     vozOciosoMin: 0,          // 0 = nunca descansa sozinho
     vozModelo: 'gpt-realtime-2.1',
