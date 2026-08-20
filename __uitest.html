@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — teste de interface</title></head>
+<body>
+<pre id="out">rodando…</pre>
+<iframe id="app" src="index.html" style="width:1200px;height:800px;border:1px solid #333"></iframe>
+<script>
+var realFetch = window.fetch.bind(window);
+var results = [];
+function ok(name, cond, extra) { results.push((cond ? 'PASS ' : 'FAIL ') + name + (cond ? '' : '  << ' + (extra || ''))); }
+
+localStorage.clear();
+
+var SSE = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":0}}}','',
+  'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Claro! **Aqui** vai:"}}','',
+  'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"\\n\\n- item um\\n- item dois"}}','',
+  'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":30}}','',
+  'data: {"type":"message_stop"}',''
+].join('\n');
+
+/* Erros dentro do iframe não sobem para cá — precisamos escutar lá dentro,
+   senão uma exceção silenciosa vira "asserção falhou" sem explicação. */
+var errosApp = [];
+function espiarErros(win) {
+  win.addEventListener('error', function (e) { errosApp.push(e.message); });
+  win.addEventListener('unhandledrejection', function (e) { errosApp.push('rejeição: ' + e.reason); });
+}
+
+function stubFetch(win) {
+  win.fetch = function (url, opts) {
+    if (String(url).indexOf('/v1/models') > -1) {
+      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ data: [] }); } });
+    }
+    var sent = false;
+    return Promise.resolve({
+      ok: true, status: 200,
+      body: { getReader: function () { return { read: function () {
+        if (sent) return Promise.resolve({ done: true });
+        sent = true;
+        return Promise.resolve({ done: false, value: new TextEncoder().encode(SSE) });
+      } }; } }
+    });
+  };
+}
+
+function waitFor(fn, desc, ms) {
+  return new Promise(function (resolve, reject) {
+    var t0 = Date.now();
+    (function tick() {
+      var v;
+      try { v = fn(); } catch (e) { v = null; }
+      if (v) return resolve(v);
+      if (Date.now() - t0 > (ms || 8000)) return reject(new Error('timeout esperando: ' + desc));
+      setTimeout(tick, 60);
+    })();
+  });
+}
+
+var frame = document.getElementById('app'), win, doc;
+
+frame.addEventListener('load', function () {
+  win = frame.contentWindow; doc = frame.contentDocument;
+  stubFetch(win); espiarErros(win);
+
+  waitFor(function () { return win.Auth && !doc.getElementById('view-auth').classList.contains('hidden'); }, 'tela de login')
+    .then(function () {
+      ok('app inicia na tela de autenticação', true);
+
+      /* ---------- cadastro pela interface ---------- */
+      doc.querySelector('.tab[data-tab="signup"]').click();
+      ok('aba de cadastro abre', !doc.getElementById('form-signup').classList.contains('hidden'));
+
+      var f = doc.getElementById('form-signup');
+      f.name.value = 'Guilherme Teste';
+      f.email.value = 'g@teste.com';
+      f.password.value = 'MinhaSenha!2026';
+      f.password2.value = 'MinhaSenha!2026';
+      f.querySelector('button[type="submit"]').click();
+
+      return waitFor(function () { return !doc.getElementById('view-app').classList.contains('hidden'); }, 'app após cadastro');
+    })
+    .then(function () {
+      ok('cadastro leva direto para o app', true);
+      ok('avatar mostra as iniciais', doc.getElementById('topbar-avatar').textContent === 'GT',
+         doc.getElementById('topbar-avatar').textContent);
+
+      /* ---------- criador de personagem abre sozinho ---------- */
+      ok('criador de personagem abre no 1º acesso',
+         !doc.getElementById('view-wizard').classList.contains('hidden'));
+      ok('não dá para fechar o criador no 1º acesso',
+         doc.getElementById('wz-close').classList.contains('hidden'));
+
+      var next = doc.getElementById('wz-next');
+      next.click();                                   // boas-vindas -> você
+      ok('passo "Você" abre', /Quem é você/.test(doc.getElementById('wz-body').textContent));
+
+      doc.getElementById('wz-apelido').value = 'Gui';
+      doc.getElementById('wz-apelido').dispatchEvent(new win.Event('input'));
+      doc.getElementById('wz-bio').value = 'dev, 28 anos, mora sozinho';
+      doc.getElementById('wz-bio').dispatchEvent(new win.Event('input'));
+      doc.querySelector('[data-uemoji="🎮"]').click();
+      next.click();                                   // você -> tdah
+
+      ok('passo "Seu TDAH" abre', /O que te trava/.test(doc.getElementById('wz-body').textContent));
+      doc.querySelector('[data-trava="Começar as coisas"]').click();
+      doc.querySelector('[data-trava="Perder a noção do tempo"]').click();
+      doc.getElementById('wz-objetivos').value = 'entregar o TCC';
+      doc.getElementById('wz-objetivos').dispatchEvent(new win.Event('input'));
+      next.click();                                   // tdah -> classe
+
+      ok('passo "Classe" abre', doc.querySelectorAll('.classe').length === 6,
+         String(doc.querySelectorAll('.classe').length));
+      doc.querySelector('[data-classe="sargento"]').click();
+      ok('classe escolhida fica marcada', doc.querySelector('[data-classe="sargento"]').classList.contains('is-active'));
+      next.click();                                   // classe -> identidade
+
+      /* validação: sem nome não passa */
+      var antesDoNome = doc.getElementById('wz-body').textContent;
+      next.click();
+      ok('não avança sem dar nome ao personagem',
+         doc.getElementById('wz-body').textContent === antesDoNome);
+
+      doc.getElementById('wz-nome').value = 'Rex';
+      doc.getElementById('wz-nome').dispatchEvent(new win.Event('input'));
+      doc.querySelector('[data-pemoji="🐺"]').click();
+      ok('nome preservado ao trocar avatar', doc.getElementById('wz-nome').value === 'Rex',
+         doc.getElementById('wz-nome').value);
+      next.click();                                   // identidade -> atributos
+
+      ok('atributos com 6 sliders', doc.querySelectorAll('[data-trait]').length === 6);
+      ok('classe Sargento sobe a firmeza',
+         parseInt(doc.querySelector('[data-trait="firmeza"]').value, 10) >= 90,
+         doc.querySelector('[data-trait="firmeza"]').value);
+      var sl = doc.querySelector('[data-trait="humor"]');
+      sl.value = 80; sl.dispatchEvent(new win.Event('input'));
+      doc.getElementById('wz-bordao').value = 'sem choro, bora';
+      doc.getElementById('wz-bordao').dispatchEvent(new win.Event('input'));
+      next.click();                                   // atributos -> voz
+
+      next.click();                                   // voz -> pronto
+      ok('tela final mostra o nome', /Rex/.test(doc.getElementById('wz-body').textContent));
+      ok('tela final mostra as instruções geradas',
+         /TDAH/.test(doc.getElementById('wz-body').textContent));
+      next.click();                                   // conclui
+
+      return waitFor(function () {
+        return doc.getElementById('view-wizard').classList.contains('hidden');
+      }, 'criador fecha ao concluir');
+    })
+    .then(function () {
+      ok('criador fecha ao concluir', true);
+      var ativa = (doc.querySelector('.page.is-active') || {}).id;
+      ok('sem chave, vai para a página da chave',
+         doc.getElementById('page-settings').classList.contains('is-active'),
+         'página ativa = ' + ativa + ' | apiKey=' + JSON.stringify(win.Store.ApiKey.meta(win.Auth.current().id)));
+      ok('saudação personalizada', /Guilherme/.test(doc.getElementById('hello-name').textContent),
+         doc.getElementById('hello-name').textContent);
+
+      /* ---------- persona salva ---------- */
+      var uid = win.Auth.current().id;
+      var per = win.Store.Persona.get(uid);
+      var perf = win.Store.Profile.get(uid);
+      ok('personagem persistido', per.nome === 'Rex' && per.arquetipo === 'sargento', JSON.stringify(per.nome));
+      ok('avatar do personagem salvo', per.emoji === '🐺', per.emoji);
+      ok('atributo ajustado à mão salvo', per.traits.humor === 80, String(per.traits.humor));
+      ok('perfil salvo com apelido', perf.apelido === 'Gui', perf.apelido);
+      ok('travas salvas', perf.travas.length === 2, JSON.stringify(perf.travas));
+      ok('marcado como onboarded', perf.onboarded === true);
+
+      /* ---------- prompt gerado ---------- */
+      var prompt = win.Persona.buildPrompt(win.Auth.current(), perf, per);
+      ok('prompt usa o nome do personagem', prompt.indexOf('Rex') > -1);
+      ok('prompt usa o apelido do usuário', prompt.indexOf('Gui') > -1);
+      ok('prompt traz as regras de TDAH', prompt.indexOf('O difícil é começar') > -1);
+      ok('prompt traz o núcleo da classe', prompt.indexOf('cortar a enrolação') > -1);
+      ok('prompt traz as travas marcadas', prompt.indexOf('Perder a noção do tempo') > -1);
+      ok('prompt traz o bordão', prompt.indexOf('sem choro, bora') > -1);
+      ok('firmeza alta vira instrução firme', prompt.indexOf('Seja firme de verdade') > -1);
+
+      /* ---------- salvar a chave ---------- */
+      doc.getElementById('api-key').value = 'sk-ant-api03-fake-para-teste';
+      doc.getElementById('btn-save-key').click();
+      return waitFor(function () { return doc.getElementById('key-badge').textContent === 'Conectada'; }, 'chave validada');
+    })
+    .then(function () {
+      ok('chave salva e validada mostra "Conectada"', true);
+      ok('pílula lateral fica verde', doc.querySelector('#api-pill .dot').className.indexOf('ok') > -1);
+
+      /* ---------- chave rejeitada se o formato for errado ---------- */
+      var before = doc.getElementById('api-key').value;
+      doc.getElementById('api-key').value = 'chave-qualquer';
+      doc.getElementById('btn-save-key').click();
+      ok('chave em formato inválido é barrada',
+         doc.getElementById('key-result').textContent.indexOf('sk-ant-') > -1,
+         doc.getElementById('key-result').textContent);
+      doc.getElementById('api-key').value = before;
+
+      /* ---------- conversar ---------- */
+      doc.querySelector('.nav-item[data-nav="chat"]').click();
+      ok('navegação para o chat', doc.getElementById('page-chat').classList.contains('is-active'));
+
+      var input = doc.getElementById('input');
+      input.value = 'Me dê dois itens';
+      doc.getElementById('composer').dispatchEvent(new win.Event('submit', { cancelable: true }));
+
+      return waitFor(function () {
+        var bots = doc.querySelectorAll('#messages .msg.bot');
+        return bots.length && /item dois/.test(bots[bots.length - 1].textContent) ? bots[bots.length - 1] : null;
+      }, 'resposta do modelo');
+    })
+    .then(function (bot) {
+      ok('mensagem do usuário aparece', doc.querySelectorAll('#messages .msg.user').length === 1);
+      ok('resposta em streaming aparece', true);
+      ok('markdown vira HTML de verdade', bot.querySelectorAll('.msg-content li').length === 2,
+         bot.querySelector('.msg-content').innerHTML.slice(0, 120));
+      ok('negrito renderizado', !!bot.querySelector('.msg-content strong'));
+      ok('cursor de digitação some no fim', !bot.querySelector('.cursor-dot'));
+      ok('botão parar volta a ficar escondido', doc.getElementById('btn-stop').hidden);
+      ok('botão parar some de verdade na tela',
+         win.getComputedStyle(doc.getElementById('btn-stop')).display === 'none',
+         win.getComputedStyle(doc.getElementById('btn-stop')).display);
+      ok('composer não vaza para fora da tela',
+         doc.getElementById('composer').getBoundingClientRect().right <= win.innerWidth + 1);
+      ok('campo de envio reabilitado', !doc.querySelector('.send').disabled);
+      ok('conversa entra na lista lateral', doc.querySelectorAll('#conv-list .conv').length === 1);
+      ok('resposta assinada com o nome do personagem',
+         /Rex/.test(bot.querySelector('.msg-name').textContent),
+         bot.querySelector('.msg-name').textContent);
+      ok('avatar do personagem na mensagem',
+         bot.querySelector('.msg-ava').textContent === '🐺',
+         bot.querySelector('.msg-ava').textContent);
+
+      /* ---------- página do TDAHzeiro ---------- */
+      doc.querySelector('.nav-item[data-nav="persona"]').click();
+      ok('página do TDAHzeiro abre', doc.getElementById('page-persona').classList.contains('is-active'));
+      ok('título da página vira o nome dele', doc.getElementById('page-title').textContent === 'Rex',
+         doc.getElementById('page-title').textContent);
+      ok('ficha mostra as 6 barras', doc.querySelectorAll('#persona-ficha .ficha-linha').length === 6);
+      ok('contexto mostra o apelido', /Gui/.test(doc.getElementById('persona-contexto').textContent));
+      ok('prompt aparece na tela', /Rex/.test(doc.getElementById('prompt-preview').textContent));
+
+      /* ---------- perfil social ---------- */
+      doc.querySelector('.nav-item[data-nav="profile"]').click();
+      ok('perfil social renderiza', !!doc.querySelector('#perfil-social .hero-nome'));
+      ok('perfil mostra a bio', /mora sozinho/.test(doc.getElementById('perfil-social').textContent));
+      ok('perfil mostra as travas como tags', /Começar as coisas/.test(doc.getElementById('perfil-social').textContent));
+
+      doc.querySelector('.nav-item[data-nav="chat"]').click();
+      ok('título da conversa vem da 1ª mensagem',
+         doc.querySelector('#conv-list .conv-title').textContent.indexOf('Me dê dois itens') === 0,
+         doc.querySelector('#conv-list .conv-title').textContent);
+
+      /* ---------- painel atualizado ---------- */
+      doc.querySelector('.nav-item[data-nav="dashboard"]').click();
+      ok('painel conta 2 mensagens', doc.getElementById('stat-msgs').textContent === '2',
+         doc.getElementById('stat-msgs').textContent);
+      ok('painel conta tokens usados', doc.getElementById('stat-tokens').textContent === '80',
+         doc.getElementById('stat-tokens').textContent);
+      ok('painel mostra custo', doc.getElementById('stat-cost').textContent.indexOf('US$') === 0);
+      ok('conversa recente listada', doc.querySelectorAll('#recent-list .recent-item').length === 1);
+
+      /* ---------- persistência entre recargas ---------- */
+      return new Promise(function (res) {
+        frame.onload = function () { res(); };
+        win.location.reload();
+      });
+    })
+    .then(function () {
+      win = frame.contentWindow; doc = frame.contentDocument;
+      stubFetch(win); espiarErros(win);
+      return waitFor(function () {
+        return !doc.getElementById('view-app').classList.contains('hidden') &&
+               doc.querySelectorAll('#conv-list .conv').length === 1;
+      }, 'sessão restaurada após recarregar');
+    })
+    .then(function () {
+      ok('sessão continua ativa depois de recarregar', true);
+      ok('conversa persistida', doc.querySelectorAll('#messages .msg').length === 2,
+         String(doc.querySelectorAll('#messages .msg').length));
+      return waitFor(function () { return doc.getElementById('key-badge').textContent === 'Conectada'; }, 'chave recarregada');
+    })
+    .then(function () {
+      ok('chave descriptografada de novo no boot', true);
+
+      /* ---------- sair ---------- */
+      doc.getElementById('btn-logout').click();
+      ok('logout volta para a tela de login', !doc.getElementById('view-auth').classList.contains('hidden'));
+      ok('app fica escondido após sair', doc.getElementById('view-app').classList.contains('hidden'));
+      ok('nenhum erro de JavaScript durante todo o fluxo', errosApp.length === 0, errosApp.join(' | '));
+    })
+    .catch(function (e) { results.push('FAIL exceção: ' + e.message); })
+    .then(function () {
+      var fails = results.filter(function (r) { return r.indexOf('FAIL') === 0; });
+      var report = results.join('\n') + '\n\n===== ' + (results.length - fails.length) + '/' + results.length +
+        ' passaram — ' + (fails.length ? 'HOUVE FALHAS' : 'TUDO VERDE') + ' =====';
+      document.getElementById('out').textContent = report;
+      realFetch('http://localhost:5174/r', { method: 'POST', body: report }).catch(function () {});
+    });
+}, { once: false });
+</script>
+</body></html>

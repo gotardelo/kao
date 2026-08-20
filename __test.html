@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — testes</title></head>
+<body>
+<pre id="out">rodando…</pre>
+<script src="js/icons.js"></script>
+<script src="js/store.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/claude.js"></script>
+<script src="js/markdown.js"></script>
+<script>
+var results = [];
+function ok(name, cond, extra) { results.push((cond ? 'PASS ' : 'FAIL ') + name + (cond ? '' : '  << ' + (extra || ''))); }
+function eq(name, a, b) { ok(name + ' (' + JSON.stringify(a) + ')', JSON.stringify(a) === JSON.stringify(b), 'esperado ' + JSON.stringify(b)); }
+
+/* ---- fetch falso: devolve um stream SSE como a API real ---- */
+var captured = null;
+var realFetch = window.fetch.bind(window);
+window.fetch = function (url, opts) {
+  captured = { url: url, headers: opts.headers, body: JSON.parse(opts.body) };
+  var sse = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":123,"output_tokens":0}}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pensando..."}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Olá "}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"mundo"}}',
+    '',
+    'event: message_delta',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":45}}',
+    '',
+    'event: message_stop',
+    'data: {"type":"message_stop"}',
+    ''
+  ].join('\n');
+
+  var enc = new TextEncoder();
+  var chunks = [enc.encode(sse.slice(0, 260)), enc.encode(sse.slice(260))]; // corta no meio de propósito
+  var i = 0;
+  return Promise.resolve({
+    ok: true, status: 200,
+    body: { getReader: function () { return { read: function () {
+      return Promise.resolve(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true });
+    } }; } }
+  });
+};
+
+function run() {
+  var uid;
+
+  /* ============ AUTENTICAÇÃO ============ */
+  return Auth.signup({ name: 'Ana Teste', email: 'ANA@Exemplo.com ', password: 'senha-forte-1!', password2: 'senha-forte-1!' })
+    .then(function (u) {
+      uid = u.id;
+      ok('signup cria usuário', !!u.id);
+      eq('e-mail normalizado', u.email, 'ana@exemplo.com');
+      ok('senha não fica em claro', JSON.stringify(u).indexOf('senha-forte-1') === -1, JSON.stringify(u.pw));
+      ok('sessão criada no signup', !!Auth.current() && Auth.current().id === uid);
+      return Auth.signup({ name: 'Outro', email: 'ana@exemplo.com', password: 'senha-forte-1!', password2: 'senha-forte-1!' })
+        .then(function () { ok('e-mail duplicado bloqueado', false); }, function () { ok('e-mail duplicado bloqueado', true); });
+    })
+    .then(function () {
+      return Auth.login({ email: 'ana@exemplo.com', password: 'errada' })
+        .then(function () { ok('senha errada rejeitada', false); }, function () { ok('senha errada rejeitada', true); });
+    })
+    .then(function () { return Auth.login({ email: 'ana@exemplo.com', password: 'senha-forte-1!' }); })
+    .then(function (u) { ok('login com senha certa', u.id === uid); })
+    .then(function () { return Auth.changePassword(uid, 'senha-forte-1!', 'nova-senha-9?', 'nova-senha-9?'); })
+    .then(function () { return Auth.login({ email: 'ana@exemplo.com', password: 'nova-senha-9?' }); })
+    .then(function (u) { ok('login com a senha nova', u.id === uid); })
+    .then(function () {
+      ok('senha fraca rejeitada', Auth.strength('123').score <= 1);
+      ok('senha forte reconhecida', Auth.strength('Xy9!longa-senha').score === 4);
+
+      /* ============ CHAVE DA API (AES-GCM) ============ */
+      return Store.ApiKey.save(uid, 'sk-ant-api03-CHAVE-SECRETA-123');
+    })
+    .then(function () {
+      var raw = localStorage.getItem(Store.keys.apikey(uid));
+      ok('chave não fica em claro no localStorage', raw.indexOf('CHAVE-SECRETA') === -1, raw);
+      return Store.ApiKey.load(uid);
+    })
+    .then(function (key) {
+      eq('chave descriptografa igual', key, 'sk-ant-api03-CHAVE-SECRETA-123');
+
+      /* ============ CONVERSAS ============ */
+      var c = Store.Convs.create(uid);
+      c.messages.push({ id: '1', role: 'user', content: 'oi' });
+      Store.Convs.save(uid, c);
+      eq('conversa salva e recuperada', Store.Convs.get(uid, c.id).messages.length, 1);
+      Store.Convs.remove(uid, c.id);
+      eq('conversa removida', Store.Convs.all(uid).length, 0);
+
+      /* ============ MARKDOWN ============ */
+      var xss = MD.render('<img src=x onerror=alert(1)>');
+      ok('markdown escapa HTML', xss.indexOf('<img') === -1, xss);
+      ok('negrito', MD.render('**forte**').indexOf('<strong>forte</strong>') > -1);
+      ok('bloco de código', MD.render('```js\nvar a=1;\n```').indexOf('<code>var a=1;</code>') > -1);
+      ok('lista', MD.render('- um\n- dois').indexOf('<li>um</li><li>dois</li>') > -1);
+      ok('link', MD.render('[a](https://x.com)').indexOf('href="https://x.com"') > -1);
+      ok('tabela', MD.render('| a | b |\n|---|---|\n| 1 | 2 |').indexOf('<th>a</th>') > -1);
+
+      /* ============ HISTÓRICO → FORMATO DA API ============ */
+      var api = Claude.toApiMessages([
+        { role: 'assistant', content: 'sobra do começo' },
+        { role: 'user', content: 'a' },
+        { role: 'user', content: 'b' },
+        { role: 'assistant', content: 'c' },
+        { role: 'assistant', error: 'falhou' },
+        { role: 'user', content: '  ' }
+      ]);
+      eq('turnos consecutivos fundidos', api, [{ role: 'user', content: 'a\n\nb' }, { role: 'assistant', content: 'c' }]);
+
+      /* ============ STREAMING + CORPO DA REQUISIÇÃO ============ */
+      var got = { text: '', think: '' };
+      return Claude.stream(
+        { apiKey: 'sk-ant-x', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
+          system: 'sys', messages: [{ role: 'user', content: 'oi' }] },
+        { onText: function (_, all) { got.text = all; }, onThinking: function (_, all) { got.think = all; } }
+      ).promise.then(function (info) {
+        eq('SSE remonta o texto entre chunks', got.text, 'Olá mundo');
+        eq('SSE captura o raciocínio', got.think, 'pensando...');
+        eq('tokens de entrada', info.usage.input_tokens, 123);
+        eq('tokens de saída', info.usage.output_tokens, 45);
+        eq('stop_reason', info.stopReason, 'end_turn');
+
+        var b = captured.body, h = captured.headers;
+        eq('header de acesso do navegador', h['anthropic-dangerous-direct-browser-access'], 'true');
+        eq('versão da API', h['anthropic-version'], '2023-06-01');
+        eq('beta de fallback no header', h['anthropic-beta'], 'server-side-fallback-2026-07-01');
+        eq('opus-5: thinking adaptativo', b.thinking, { type: 'adaptive', display: 'summarized' });
+        eq('opus-5: effort em output_config', b.output_config, { effort: 'high' });
+        eq('opus-5: fallbacks', b.fallbacks, 'default');
+        ok('sem temperature (400 nos modelos novos)', !('temperature' in b));
+        ok('sem budget_tokens', JSON.stringify(b.thinking).indexOf('budget') === -1);
+        eq('stream ligado', b.stream, true);
+        eq('system enviado', b.system, 'sys');
+      });
+    })
+    .then(function () {
+      /* Haiku 4.5: modelo antigo → budget_tokens, sem effort */
+      return Claude.stream({ apiKey: 'k', model: 'claude-haiku-4-5', effort: 'high', maxTokens: 8000, showThinking: true,
+        messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
+        var b = captured.body;
+        eq('haiku: thinking com budget', b.thinking, { type: 'enabled', budget_tokens: 3200 });
+        ok('haiku: sem output_config.effort', !b.output_config, JSON.stringify(b.output_config));
+        ok('haiku: sem fallbacks', !b.fallbacks);
+      });
+    })
+    .then(function () {
+      /* Fable 5: thinking é sempre ligado; configurá-lo dá 400 */
+      return Claude.stream({ apiKey: 'k', model: 'claude-fable-5', effort: 'max', maxTokens: 200000, showThinking: true,
+        messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
+        var b = captured.body;
+        ok('fable: sem campo thinking', !('thinking' in b), JSON.stringify(b.thinking));
+        eq('fable: effort respeitado', b.output_config, { effort: 'max' });
+        eq('max_tokens limitado ao teto do modelo', b.max_tokens, 128000);
+      });
+    })
+    .then(function () {
+      /* showThinking desligado: nunca mandamos type:disabled nos modelos novos */
+      return Claude.stream({ apiKey: 'k', model: 'claude-opus-5', effort: 'low', maxTokens: 4000, showThinking: false,
+        messages: [{ role: 'user', content: 'oi' }] }, {}).promise.then(function () {
+        eq('thinking sem display quando oculto', captured.body.thinking, { type: 'adaptive' });
+      });
+    })
+    .then(function () {
+      /* ============ USO / CUSTO ============ */
+      Store.Usage.reset(uid);
+      var u = Store.Usage.add(uid, 1000000, 1000000, 'claude-opus-5');
+      eq('custo opus-5 (5 + 25)', Math.round(u.cost), 30);
+      Auth.logout();
+      ok('logout limpa a sessão', Auth.current() === null);
+    })
+    .catch(function (e) { results.push('FAIL exceção: ' + (e && e.message) + '\n' + (e && e.stack)); })
+    .then(function () {
+      var fails = results.filter(function (r) { return r.indexOf('FAIL') === 0; });
+      var report = results.join('\n') + '\n\n===== ' + (results.length - fails.length) + '/' + results.length +
+        ' passaram — ' + (fails.length ? 'HOUVE FALHAS' : 'TUDO VERDE') + ' =====';
+      document.getElementById('out').textContent = report;
+      realFetch('http://localhost:5174/r', { method: 'POST', body: report }).catch(function () {});
+    });
+}
+
+window.addEventListener('error', function (e) { results.push('FAIL erro global: ' + e.message); });
+run();
+</script>
+</body></html>

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Kao — testes de memória, finanças e ferramentas</title></head>
+<body>
+<pre id="out">rodando…</pre>
+<script src="js/icons.js"></script>
+<script src="js/markdown.js"></script>
+<script src="js/persona.js"></script>
+<script src="js/store.js"></script>
+<script src="js/memoria.js"></script>
+<script src="js/financas.js"></script>
+<script src="js/ferramentas.js"></script>
+<script src="js/claude.js"></script>
+<script>
+var realFetch = window.fetch.bind(window);
+var results = [];
+function ok(n, c, x) { results.push((c ? 'PASS ' : 'FAIL ') + n + (c ? '' : '  << ' + (x || ''))); }
+function eq(n, a, b) { ok(n + ' (' + JSON.stringify(a) + ')', JSON.stringify(a) === JSON.stringify(b), 'esperado ' + JSON.stringify(b)); }
+
+localStorage.clear();
+var UID = 'u-teste';
+
+/* ============ MEMÓRIA ============ */
+Memoria.lembrar(UID, 'Trabalha como dev backend', 'trabalho');
+Memoria.lembrar(UID, 'Trabalha como dev backend', 'trabalho');     // duplicata
+Memoria.lembrar(UID, 'Toma Venvanse 50mg de manhã', 'saude');
+eq('fatos não duplicam', Memoria.tudo(UID).fatos.length, 2);
+
+var hoje = Memoria.hoje();
+var ontem = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+var amanha = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+Memoria.anotarPendencia(UID, 'Escrever intro do TCC', ontem, 'alta');
+Memoria.anotarPendencia(UID, 'Comprar ração', amanha, 'normal');
+Memoria.anotarPendencia(UID, 'Ligar pro dentista', '', 'baixa');
+eq('3 pendências abertas', Memoria.abertas(UID).length, 3);
+eq('1 atrasada', Memoria.atrasadas(UID).length, 1);
+eq('a atrasada é a certa', Memoria.atrasadas(UID)[0].texto, 'Escrever intro do TCC');
+
+var c = Memoria.concluirPendencia(UID, 'ração');
+ok('conclui por trecho do texto', c && c.texto === 'Comprar ração', c && c.texto);
+eq('sobram 2 abertas', Memoria.abertas(UID).length, 2);
+
+Memoria.anotarDia(UID, 'Consegui escrever duas páginas.');
+Memoria.anotarDia(UID, 'Depois travei no capítulo 3.');
+var d = Memoria.diaDe(UID, hoje);
+ok('diário acumula no mesmo dia', d && /duas páginas/.test(d.resumo) && /capítulo 3/.test(d.resumo), d && d.resumo);
+
+var pm = Memoria.resumoParaPrompt(UID);
+ok('prompt traz os fatos', pm.indexOf('dev backend') > -1);
+ok('prompt marca a atrasada', pm.indexOf('[ATRASADA') > -1, pm);
+ok('prompt traz o concluído hoje', pm.indexOf('Comprar ração') > -1);
+
+/* ============ FINANÇAS ============ */
+Financas.ajustar(UID, { rendaMensal: 5000, limiteMensal: 2000 });
+Financas.novaConta(UID, { nome: 'Aluguel', valor: 1500, diaVencimento: 5, categoria: 'moradia' });
+Financas.novaConta(UID, { nome: 'Internet', valor: 100, diaVencimento: 20, categoria: 'moradia' });
+Financas.registrar(UID, { tipo: 'gasto', valor: 250, categoria: 'comida', descricao: 'iFood' });
+Financas.registrar(UID, { tipo: 'gasto', valor: 80, categoria: 'impulso', descricao: 'jogo na steam' });
+Financas.registrar(UID, { tipo: 'receita', valor: 700, descricao: 'freela' });
+
+var r = Financas.resumo(UID);
+eq('gastos somados', r.gastos, 330);
+eq('receitas somadas', r.receitas, 700);
+eq('contas em aberto', r.contasAbertas, 2);
+eq('total a pagar', r.aPagar, 1600);
+eq('sobra = renda - gastos - contas', r.sobra, 5000 - 330 - 1600);
+eq('categoria líder', r.porCategoria[0].categoria, 'comida');
+ok('não estourou ainda', !r.estourou);
+
+/* antes de pagar: 330 gastos + 1600 em contas = projeção 1930, dentro do teto de 2000 */
+ok('projeção calculada', r.projecao === 330 + 1600, String(r.projecao));
+ok('ainda não vai estourar', !r.vaiEstourar);
+
+Financas.pagarConta(UID, 'aluguel');
+var r2 = Financas.resumo(UID);
+eq('sobra 1 conta', r2.contasAbertas, 1);
+eq('pagar conta registra gasto', r2.gastos, 330 + 1500);
+ok('1830 ainda não estoura o teto de 2000', !r2.estourou);
+
+/* mais um gasto empurra a projeção para fora do teto, antes do estouro real */
+Financas.registrar(UID, { tipo: 'gasto', valor: 100, categoria: 'lazer', descricao: 'cinema' });
+var r2b = Financas.resumo(UID);
+ok('1930 gasto ainda não estourou', !r2b.estourou, String(r2b.gastos));
+ok('mas com a conta em aberto vai estourar', r2b.vaiEstourar, String(r2b.projecao));
+
+Financas.registrar(UID, { tipo: 'gasto', valor: 200, categoria: 'lazer', descricao: 'show' });
+var r2c = Financas.resumo(UID);
+ok('agora estourou de verdade', r2c.estourou, String(r2c.gastos));
+
+Financas.novaMeta(UID, { nome: 'Reserva', alvo: 10000 });
+Financas.guardar(UID, 'reserva', 1500);
+eq('meta acumula', Financas.tudo(UID).metas[0].guardado, 1500);
+
+var pf = Financas.resumoParaPrompt(UID);
+ok('prompt financeiro avisa do estouro', pf.indexOf('limite do mês já estourou') > -1, pf.slice(0, 200));
+ok('prompt financeiro traz a projeção quando vai estourar',
+   Financas.resumoParaPrompt('u-proj-teste-vazio') === '' , 'guarda: conta vazia devolve string vazia');
+ok('prompt financeiro lista vencimento', pf.indexOf('Internet') > -1);
+
+eq('parser de moeda "1.234,56"', Financas.num('R$ 1.234,56'), 1234.56);
+eq('parser de moeda "40"', Financas.num('40'), 40);
+
+/* ============ FERRAMENTAS ============ */
+localStorage.removeItem(Store.keys.memoria(UID));
+localStorage.removeItem(Store.keys.financas(UID));
+
+var res = Ferramentas.executar(UID, 'registrar_gasto', { valor: 40, descricao: 'mercado', categoria: 'mercado' });
+ok('registrar_gasto grava', Financas.resumo(UID).gastos === 40, String(Financas.resumo(UID).gastos));
+ok('registrar_gasto devolve total', /40/.test(res.conteudo), res.conteudo);
+ok('sem erro', !res.erro);
+
+Ferramentas.executar(UID, 'criar_pendencia', { texto: 'Pagar o IPTU', prazo: '', prioridade: 'alta' });
+eq('criar_pendencia grava', Memoria.abertas(UID).length, 1);
+
+var r3 = Ferramentas.executar(UID, 'concluir_pendencia', { descricao: 'IPTU' });
+eq('concluir_pendencia funciona', Memoria.abertas(UID).length, 0);
+ok('concluir devolve confirmação', /Concluída/.test(r3.conteudo), r3.conteudo);
+
+var r4 = Ferramentas.executar(UID, 'concluir_pendencia', { descricao: 'coisa que não existe' });
+ok('concluir inexistente não quebra', !r4.erro && /Não achei/.test(r4.conteudo), r4.conteudo);
+
+Ferramentas.executar(UID, 'cadastrar_conta', { nome: 'Luz', valor: 180, dia_vencimento: 10, categoria: 'moradia', recorrente: true });
+Ferramentas.executar(UID, 'marcar_conta_paga', { nome: 'luz' });
+eq('marcar_conta_paga registra o gasto', Financas.resumo(UID).gastos, 220);
+
+var r5 = Ferramentas.executar(UID, 'consultar_financas', {});
+ok('consultar_financas devolve texto útil', /Gastos até agora/.test(r5.conteudo), r5.conteudo.slice(0, 80));
+
+var r6 = Ferramentas.executar(UID, 'ferramenta_inexistente', {});
+ok('ferramenta desconhecida vira erro tratado', r6.erro === true && /desconhecida/.test(r6.conteudo));
+
+/* schemas */
+var nomes = Ferramentas.DEFINICOES.map(function (t) { return t.name; });
+ok('toda ferramenta tem executor', nomes.every(function (n) {
+  return Ferramentas.executar(UID, n, {}).conteudo.indexOf('desconhecida') === -1;
+}), nomes.join(','));
+ok('todo schema é strict', Ferramentas.DEFINICOES.every(function (t) { return t.strict === true; }));
+ok('todo schema barra campo extra', Ferramentas.DEFINICOES.every(function (t) {
+  return t.input_schema.additionalProperties === false;
+}));
+ok('todo required existe nas properties', Ferramentas.DEFINICOES.every(function (t) {
+  return (t.input_schema.required || []).every(function (k) { return k in t.input_schema.properties; });
+}), JSON.stringify(nomes));
+
+
+/* ============ TETO DE GASTO DA API ============ */
+var UT = 'u-teto';
+localStorage.removeItem(Store.keys.usage(UT));
+
+eq('sem uso, custo zero', Store.Usage.doMes(UT).cost, 0);
+ok('sem teto definido nunca estoura', !Store.Usage.teto(UT, 0).estourou);
+ok('restante infinito sem teto', Store.Usage.teto(UT, 0).restante === Infinity);
+
+/* 1M entrada + 1M saida no Opus 5 = 5 + 25 = US$ 30 */
+Store.Usage.add(UT, 1000000, 1000000, 'claude-opus-5');
+eq('custo do mes acumula', Math.round(Store.Usage.doMes(UT).cost), 30);
+eq('total acumula junto', Math.round(Store.Usage.get(UT).cost), 30);
+eq('conta as chamadas', Store.Usage.doMes(UT).calls, 1);
+
+var t10 = Store.Usage.teto(UT, 10);
+ok('estourou um teto de 10', t10.estourou, String(t10.gasto));
+eq('restante zerado', t10.restante, 0);
+
+var t50 = Store.Usage.teto(UT, 50);
+ok('nao estourou um teto de 50', !t50.estourou);
+eq('percentual do teto', t50.pct, 60);
+ok('60% ainda nao e "perto"', !t50.perto);
+
+Store.Usage.add(UT, 500000, 300000, 'claude-opus-5');  /* +2.5 +7.5 = 10 -> 40 de 50 */
+var t50b = Store.Usage.teto(UT, 50);
+ok('80% dispara o aviso de "perto"', t50b.perto, String(t50b.pct));
+ok('mas ainda nao bloqueia', !t50b.estourou);
+
+/* Haiku e ~5x mais barato que Opus na saida */
+localStorage.removeItem(Store.keys.usage(UT));
+Store.Usage.add(UT, 1000000, 1000000, 'claude-haiku-4-5');
+eq('haiku 4.5 custa 6 no mesmo volume', Math.round(Store.Usage.doMes(UT).cost), 6);
+
+/* mes anterior nao conta no teto atual */
+localStorage.removeItem(Store.keys.usage(UT));
+var u = Store.Usage.tudo(UT);
+u.meses['2020-01'] = { input: 0, output: 0, cost: 999, calls: 1 };
+u.total.cost = 999;
+Store.write(Store.keys.usage(UT), u);
+eq('gasto de outro mes nao entra no teto', Store.Usage.doMes(UT).cost, 0);
+ok('teto olha so o mes corrente', !Store.Usage.teto(UT, 10).estourou);
+eq('mas o total historico preserva', Math.round(Store.Usage.get(UT).cost), 999);
+
+/* formato antigo (so acumulado) nao quebra */
+Store.write(Store.keys.usage('u-antigo'), { input: 100, output: 200, cost: 12.5, calls: 3 });
+eq('migra formato antigo para total', Store.Usage.get('u-antigo').cost, 12.5);
+eq('formato antigo comeca o mes zerado', Store.Usage.doMes('u-antigo').cost, 0);
+
+
+/* ============ CACHE DE PROMPT ============ */
+var UC = 'u-cache';
+localStorage.removeItem(Store.keys.usage(UC));
+
+/* sem cache: 1M entrada Opus = US$ 5 */
+Store.Usage.add(UC, 1000000, 0, 'claude-opus-5', { lidos: 0, escritos: 0 });
+eq('entrada normal custa cheio', Math.round(Store.Usage.doMes(UC).cost), 5);
+eq('sem cache, sem economia', Store.Usage.doMes(UC).economia, 0);
+
+/* leitura de cache custa 10% */
+localStorage.removeItem(Store.keys.usage(UC));
+Store.Usage.add(UC, 0, 0, 'claude-opus-5', { lidos: 1000000, escritos: 0 });
+eq('leitura de cache custa 10%', Store.Usage.doMes(UC).cost.toFixed(2), '0.50');
+eq('economia registrada', Store.Usage.doMes(UC).economia.toFixed(2), '4.50');
+eq('tokens de cache contabilizados', Store.Usage.doMes(UC).cacheLido, 1000000);
+
+/* gravação de cache custa 125% */
+localStorage.removeItem(Store.keys.usage(UC));
+Store.Usage.add(UC, 0, 0, 'claude-opus-5', { lidos: 0, escritos: 1000000 });
+eq('gravar cache custa 125%', Store.Usage.doMes(UC).cost.toFixed(2), '6.25');
+ok('gravar cache nao gera economia', Store.Usage.doMes(UC).economia === 0, String(Store.Usage.doMes(UC).economia));
+
+/* corpo da requisicao com cache */
+var corpoCache = null;
+var fetchAntigo = window.fetch;
+window.fetch = function (url, opts) {
+  corpoCache = JSON.parse(opts.body);
+  return Promise.resolve({ ok: true, status: 200, body: { getReader: function () {
+    return { read: function () { return Promise.resolve({ done: true }); } };
+  } } });
+};
+
+Claude.stream({
+  apiKey: 'k', model: 'claude-opus-5', maxTokens: 4000,
+  systemEstavel: 'PERSONALIDADE FIXA', systemVolatil: 'MEMORIA QUE MUDA',
+  messages: [{ role: 'user', content: 'oi' }], tools: Ferramentas.DEFINICOES
+}, {}).promise.then(function () {
+  ok('system virou array de blocos', Array.isArray(corpoCache.system), typeof corpoCache.system);
+  eq('bloco estavel vem primeiro', corpoCache.system[0].text, 'PERSONALIDADE FIXA');
+  eq('marcador de cache no bloco estavel', corpoCache.system[0].cache_control, { type: 'ephemeral' });
+  eq('bloco volatil vem depois', corpoCache.system[1].text, 'MEMORIA QUE MUDA');
+  ok('volatil NAO e cacheado', !corpoCache.system[1].cache_control,
+     JSON.stringify(corpoCache.system[1].cache_control));
+
+  var ferrs = corpoCache.tools;
+  eq('marcador na ultima ferramenta', ferrs[ferrs.length - 1].cache_control, { type: 'ephemeral' });
+  ok('ferramentas anteriores sem marcador', !ferrs[0].cache_control);
+  eq('so um marcador nas ferramentas',
+     ferrs.filter(function (t) { return !!t.cache_control; }).length, 1);
+  ok('marcar nao polui a definicao original',
+     !Ferramentas.DEFINICOES[Ferramentas.DEFINICOES.length - 1].cache_control,
+     'a lista global foi modificada');
+
+  /* com cache desligado volta ao formato simples */
+  return Claude.stream({
+    apiKey: 'k', model: 'claude-opus-5', maxTokens: 4000, cache: false,
+    systemEstavel: 'PERSONALIDADE FIXA', systemVolatil: 'MEMORIA QUE MUDA',
+    messages: [{ role: 'user', content: 'oi' }], tools: Ferramentas.DEFINICOES
+  }, {}).promise;
+}).then(function () {
+  ok('sem cache, system vira string', typeof corpoCache.system === 'string', typeof corpoCache.system);
+  ok('sem cache, as duas partes continuam no prompt',
+     /PERSONALIDADE FIXA/.test(corpoCache.system) && /MEMORIA QUE MUDA/.test(corpoCache.system));
+  ok('sem cache, nenhuma ferramenta marcada',
+     corpoCache.tools.every(function (t) { return !t.cache_control; }));
+  window.fetch = fetchAntigo;
+}).catch(function (e) {
+  results.push('FAIL cache: ' + e.message);
+  window.fetch = fetchAntigo;
+}).then(function () { proximo(); });
+
+/* o restante dos testes espera este bloco terminar */
+function proximo() {
+
+/* ============ LAÇO DE FERRAMENTAS NO STREAMING ============ */
+var chamadas = [];
+function sse(linhas) { return linhas.join('\n'); }
+
+/* rodada 1: modelo pede a ferramenta. rodada 2: responde em texto. */
+var rodada = 0;
+window.fetch = function (url, opts) {
+  var body = JSON.parse(opts.body);
+  chamadas.push(body);
+  rodada++;
+  var texto = rodada === 1 ? sse([
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}', '',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}', '',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"preciso registrar"}}', '',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ASSINATURA123"}}', '',
+    'data: {"type":"content_block_stop","index":0}', '',
+    'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}', '',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Anotei aqui."}}', '',
+    'data: {"type":"content_block_stop","index":1}', '',
+    'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"registrar_gasto","input":{}}}', '',
+    'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"valor\\":55,"}}', '',
+    'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\"descricao\\":\\"pizza\\",\\"categoria\\":\\"comida\\"}"}}', '',
+    'data: {"type":"content_block_stop","index":2}', '',
+    'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":40}}', '',
+    'data: {"type":"message_stop"}', ''
+  ]) : sse([
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":150,"output_tokens":0}}}', '',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}', '',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Total do mês agora é 55."}}', '',
+    'data: {"type":"content_block_stop","index":0}', '',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}', '',
+    'data: {"type":"message_stop"}', ''
+  ]);
+
+  var enviado = false;
+  return Promise.resolve({
+    ok: true, status: 200,
+    body: { getReader: function () { return { read: function () {
+      if (enviado) return Promise.resolve({ done: true });
+      enviado = true;
+      return Promise.resolve({ done: false, value: new TextEncoder().encode(texto) });
+    } }; } }
+  });
+};
+
+localStorage.removeItem(Store.keys.financas(UID));
+
+Claude.stream({
+  apiKey: 'k', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
+  system: 'sys', messages: [{ role: 'user', content: 'gastei 55 numa pizza' }],
+  tools: Ferramentas.DEFINICOES
+}, {}).promise.then(function (info) {
+  eq('rodada 1 pede ferramenta', info.stopReason, 'tool_use');
+  eq('1 ferramenta pedida', info.ferramentas.length, 1);
+  eq('nome da ferramenta', info.ferramentas[0].name, 'registrar_gasto');
+  eq('input remontado de vários deltas', info.ferramentas[0].input, { valor: 55, descricao: 'pizza', categoria: 'comida' });
+  eq('texto parcial preservado', info.text, 'Anotei aqui.');
+
+  /* os blocos precisam voltar intactos, com a assinatura do thinking */
+  var b = info.blocos;
+  eq('3 blocos remontados', b.length, 3);
+  eq('bloco 0 é thinking', b[0].type, 'thinking');
+  eq('assinatura do thinking preservada', b[0].signature, 'ASSINATURA123');
+  eq('conteúdo do thinking preservado', b[0].thinking, 'preciso registrar');
+  eq('bloco 2 é tool_use com id', b[2].id, 'toolu_1');
+  ok('tool_use não carrega json parcial solto', !('partial_json' in b[2]));
+
+  /* simula o que o app faz: executa e manda de volta */
+  var resultado = Ferramentas.executar(UID, info.ferramentas[0].name, info.ferramentas[0].input);
+  eq('ferramenta gravou o gasto', Financas.resumo(UID).gastos, 55);
+
+  var msgs = [
+    { role: 'user', content: 'gastei 55 numa pizza' },
+    { role: 'assistant', content: info.blocos },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: resultado.conteudo, is_error: false }] }
+  ];
+
+  return Claude.stream({
+    apiKey: 'k', model: 'claude-opus-5', effort: 'high', maxTokens: 8000, showThinking: true,
+    system: 'sys', messages: msgs, tools: Ferramentas.DEFINICOES
+  }, {}).promise;
+}).then(function (info2) {
+  eq('rodada 2 encerra', info2.stopReason, 'end_turn');
+  eq('nenhuma ferramenta na rodada 2', info2.ferramentas.length, 0);
+
+  var b2 = chamadas[1];
+  ok('ferramentas foram enviadas no corpo', Array.isArray(b2.tools) && b2.tools.length === Ferramentas.DEFINICOES.length,
+     String(b2.tools && b2.tools.length));
+  eq('assistant devolvido com blocos', b2.messages[1].content[0].type, 'thinking');
+  eq('assinatura reenviada intacta', b2.messages[1].content[0].signature, 'ASSINATURA123');
+  eq('tool_result no formato certo', b2.messages[2].content[0].type, 'tool_result');
+  eq('tool_use_id casa', b2.messages[2].content[0].tool_use_id, 'toolu_1');
+}).catch(function (e) {
+  results.push('FAIL exceção: ' + e.message + '\n' + e.stack);
+}).then(function () {
+  var fails = results.filter(function (r) { return r.indexOf('FAIL') === 0; });
+  var rel = results.join('\n') + '\n\n===== ' + (results.length - fails.length) + '/' + results.length +
+    ' passaram — ' + (fails.length ? 'HOUVE FALHAS' : 'TUDO VERDE') + ' =====';
+  document.getElementById('out').textContent = rel;
+  realFetch('http://localhost:5174/r', { method: 'POST', body: rel }).catch(function () {});
+});
+}  /* fim de proximo() */
+</script>
+</body></html>

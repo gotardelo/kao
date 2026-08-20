@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<meta name="theme-color" content="#0b0d12">
+<meta name="description" content="Kao — seu copiloto pessoal com IA, disponível 24h no navegador.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kao">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/persona.css">
+<link rel="stylesheet" href="css/vida.css">
+<title>Kao · Copiloto</title>
+</head>
+<body>
+
+<!-- ============ SPLASH ============ -->
+<div id="splash" class="splash">
+  <div class="logo-mark xl">K</div>
+  <div class="splash-bar"><span></span></div>
+</div>
+
+<!-- ============ AUTENTICAÇÃO ============ -->
+<main id="view-auth" class="auth hidden">
+  <div class="auth-aside">
+    <div class="auth-brand">
+      <div class="logo-mark">K</div>
+      <span>Kao</span>
+    </div>
+    <h1>Seu copiloto<br><em>disponível 24h</em>.</h1>
+    <p>Converse, planeje e execute com a inteligência da Anthropic — direto do navegador, no celular ou no desktop. Sua chave, seus dados, seu ritmo.</p>
+    <ul class="auth-points">
+      <li><i data-ico="lock"></i><div><strong>Chave criptografada</strong><span>AES-GCM com chave não-exportável no seu dispositivo.</span></div></li>
+      <li><i data-ico="bolt"></i><div><strong>Respostas em tempo real</strong><span>Streaming token a token, sem espera.</span></div></li>
+      <li><i data-ico="phone"></i><div><strong>Instalável</strong><span>Funciona como app no celular e abre offline.</span></div></li>
+    </ul>
+  </div>
+
+  <div class="auth-panel">
+    <div class="auth-card">
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="login" role="tab">Entrar</button>
+        <button class="tab" data-tab="signup" role="tab">Criar conta</button>
+      </div>
+
+      <!-- LOGIN -->
+      <form id="form-login" class="form" novalidate>
+        <label class="field">
+          <span>E-mail</span>
+          <input type="email" name="email" autocomplete="username" placeholder="voce@email.com" required>
+        </label>
+        <label class="field">
+          <span>Senha</span>
+          <div class="input-wrap">
+            <input type="password" name="password" autocomplete="current-password" placeholder="••••••••" required>
+            <button type="button" class="eye" data-toggle-pass aria-label="Mostrar senha"><i data-ico="eye"></i></button>
+          </div>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="remember" checked>
+          <span>Manter conectado por 30 dias</span>
+        </label>
+        <p class="form-error" data-error></p>
+        <button class="btn btn-primary btn-block" type="submit">Entrar</button>
+        <p class="form-foot">Não tem conta? <button type="button" class="link" data-goto-tab="signup">Criar agora</button></p>
+      </form>
+
+      <!-- CADASTRO -->
+      <form id="form-signup" class="form hidden" novalidate>
+        <label class="field">
+          <span>Como devo te chamar?</span>
+          <input type="text" name="name" autocomplete="name" placeholder="Seu nome" required>
+        </label>
+        <label class="field">
+          <span>E-mail</span>
+          <input type="email" name="email" autocomplete="username" placeholder="voce@email.com" required>
+        </label>
+        <label class="field">
+          <span>Senha</span>
+          <div class="input-wrap">
+            <input type="password" name="password" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" required>
+            <button type="button" class="eye" data-toggle-pass aria-label="Mostrar senha"><i data-ico="eye"></i></button>
+          </div>
+          <div class="meter"><span data-strength-bar></span></div>
+          <small class="hint" data-strength-label>Use letras, números e símbolos.</small>
+        </label>
+        <label class="field">
+          <span>Confirmar senha</span>
+          <input type="password" name="password2" autocomplete="new-password" placeholder="Repita a senha" required>
+        </label>
+        <p class="form-error" data-error></p>
+        <button class="btn btn-primary btn-block" type="submit">Criar minha conta</button>
+        <p class="form-foot">Já tem conta? <button type="button" class="link" data-goto-tab="login">Entrar</button></p>
+      </form>
+    </div>
+    <p class="auth-legal">Contas e conversas ficam apenas neste dispositivo, no armazenamento local do navegador.</p>
+  </div>
+</main>
+
+<!-- ============ APP ============ -->
+<div id="view-app" class="app hidden">
+
+  <div class="scrim" data-close-drawer></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-head">
+      <div class="auth-brand">
+        <div class="logo-mark">K</div>
+        <span>Kao</span>
+      </div>
+      <button class="icon-btn only-mobile" data-close-drawer aria-label="Fechar menu"><i data-ico="x"></i></button>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="btn-new-chat"><i data-ico="plus"></i> Nova conversa</button>
+
+    <nav class="nav">
+      <button class="nav-item is-active" data-nav="dashboard"><i data-ico="grid"></i> Painel</button>
+      <button class="nav-item" data-nav="chat"><i data-ico="chat"></i> Conversar</button>
+      <button class="nav-item" data-nav="vida"><i data-ico="heart"></i> Minha vida</button>
+      <button class="nav-item" data-nav="persona"><i data-ico="spark"></i> Meu TDAHzeiro</button>
+      <button class="nav-item" data-nav="profile"><i data-ico="user"></i> Meu perfil</button>
+      <button class="nav-item" data-nav="settings"><i data-ico="key"></i> Chave &amp; Modelo</button>
+    </nav>
+
+    <div class="side-section">
+      <div class="side-label">Conversas recentes</div>
+      <div class="conv-list" id="conv-list"></div>
+    </div>
+
+    <div class="side-foot">
+      <div class="api-pill" id="api-pill"><span class="dot"></span><span data-txt>Verificando…</span></div>
+      <button class="nav-item danger" id="btn-logout"><i data-ico="exit"></i> Sair</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn only-mobile" data-open-drawer aria-label="Abrir menu"><i data-ico="menu"></i></button>
+      <h2 id="page-title">Painel</h2>
+      <div class="spacer"></div>
+      <button class="avatar" data-nav="profile" id="topbar-avatar">K</button>
+    </header>
+
+    <!-- ---------- PAINEL ---------- -->
+    <section class="page is-active" id="page-dashboard">
+      <div class="page-inner">
+        <div class="hero-card">
+          <div>
+            <p class="eyebrow">Bem-vindo de volta</p>
+            <h3 id="hello-name">Olá!</h3>
+            <p class="muted" id="hello-sub">Seu copiloto está pronto quando você estiver.</p>
+          </div>
+          <button class="btn btn-primary" data-nav="chat"><i data-ico="bolt"></i> Conversar agora</button>
+        </div>
+
+        <div id="briefing"></div>
+        <div id="teto-api"></div>
+
+        <div class="stats">
+          <div class="stat">
+            <span class="stat-ico v"><i data-ico="chat"></i></span>
+            <div><b id="stat-convs">0</b><small>Conversas</small></div>
+          </div>
+          <div class="stat">
+            <span class="stat-ico c"><i data-ico="msg"></i></span>
+            <div><b id="stat-msgs">0</b><small>Mensagens</small></div>
+          </div>
+          <div class="stat">
+            <span class="stat-ico g"><i data-ico="chip"></i></span>
+            <div><b id="stat-tokens">0</b><small>Tokens usados</small></div>
+          </div>
+          <div class="stat">
+            <span class="stat-ico o"><i data-ico="coin"></i></span>
+            <div><b id="stat-cost">US$ 0,00</b><small>API neste mês</small></div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h4>Status da conexão</h4><button class="btn btn-ghost btn-sm" id="btn-recheck">Testar</button></div>
+            <div class="status-row" id="status-key"><span class="dot"></span><div><strong>Chave da API</strong><small data-txt>—</small></div></div>
+            <div class="status-row" id="status-net"><span class="dot"></span><div><strong>Rede</strong><small data-txt>—</small></div></div>
+            <div class="status-row" id="status-model"><span class="dot"></span><div><strong>Modelo padrão</strong><small data-txt>—</small></div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h4>Atalhos</h4></div>
+            <div class="shortcuts" id="shortcuts">
+              <button class="shortcut" data-prompt="Me ajude a organizar as prioridades do meu dia. Comece me fazendo as perguntas necessárias."><i data-ico="grid"></i><span>Planejar meu dia</span></button>
+              <button class="shortcut" data-prompt="Explique este conceito de forma simples e com um exemplo prático: "><i data-ico="bulb"></i><span>Explicar algo</span></button>
+              <button class="shortcut" data-prompt="Revise e melhore este texto, mantendo minha voz: "><i data-ico="pen"></i><span>Revisar texto</span></button>
+              <button class="shortcut" data-prompt="Analise este código, aponte problemas e sugira melhorias: "><i data-ico="code"></i><span>Analisar código</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Continuar de onde parou</h4><button class="btn btn-ghost btn-sm" data-nav="chat">Ver tudo</button></div>
+          <div class="recent" id="recent-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- CHAT ---------- -->
+    <section class="page" id="page-chat">
+      <div class="chat">
+        <div class="chat-scroll" id="chat-scroll">
+          <div class="chat-empty" id="chat-empty">
+            <div id="chat-empty-ava"><div class="logo-mark xl">K</div></div>
+            <h3>Como posso ajudar hoje?</h3>
+            <p class="muted">Pergunte qualquer coisa — eu mantenho o contexto da conversa.</p>
+            <div class="chips">
+              <button class="chip" data-prompt="Resuma o que eu preciso saber para começar bem o dia.">Resumir meu dia</button>
+              <button class="chip" data-prompt="Vamos fazer um brainstorm. Tema: ">Brainstorm</button>
+              <button class="chip" data-prompt="Escreva um e-mail profissional e direto sobre: ">Escrever e-mail</button>
+              <button class="chip" data-prompt="Me ensine passo a passo: ">Aprender algo</button>
+            </div>
+          </div>
+          <div id="messages"></div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer-meta">
+            <select id="model-quick" class="mini-select" title="Modelo"></select>
+            <span class="ctx" id="ctx-info"></span>
+            <button class="btn btn-ghost btn-sm" id="btn-stop" hidden><i data-ico="stop"></i> Parar</button>
+          </div>
+          <form class="composer" id="composer">
+            <textarea id="input" rows="1" placeholder="Fala comigo…" autocomplete="off"></textarea>
+            <button class="mic" type="button" id="btn-mic" hidden aria-label="Falar em vez de digitar"><i data-ico="mic"></i></button>
+            <button class="send" type="submit" aria-label="Enviar"><i data-ico="send"></i></button>
+          </form>
+          <p class="composer-hint">Enter envia · Shift+Enter quebra linha</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- CHAVE & MODELO ---------- -->
+    <section class="page" id="page-settings">
+      <div class="page-inner narrow">
+        <div class="card">
+          <div class="card-head">
+            <h4>Chave da API Anthropic</h4>
+            <span class="badge" id="key-badge">Não configurada</span>
+          </div>
+          <p class="muted small">Cole sua chave (<code>sk-ant-…</code>) gerada em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Ela é criptografada com AES-GCM por uma chave que nunca sai deste dispositivo, e só é enviada para a própria API da Anthropic.</p>
+          <div class="input-wrap">
+            <input type="password" id="api-key" placeholder="sk-ant-api03-..." autocomplete="off" spellcheck="false">
+            <button type="button" class="eye" data-toggle-pass aria-label="Mostrar chave"><i data-ico="eye"></i></button>
+          </div>
+          <div class="row-btns">
+            <button class="btn btn-primary" id="btn-save-key"><i data-ico="check"></i> Salvar e testar</button>
+            <button class="btn btn-ghost" id="btn-clear-key">Remover chave</button>
+          </div>
+          <p class="test-result" id="key-result"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Modelo e comportamento</h4></div>
+          <label class="field">
+            <span>Modelo padrão</span>
+            <select id="cfg-model"></select>
+            <small class="hint" id="model-hint"></small>
+          </label>
+          <label class="field">
+            <span>Esforço de raciocínio</span>
+            <select id="cfg-effort">
+              <option value="low">Baixo — respostas rápidas e diretas</option>
+              <option value="medium">Médio — equilíbrio</option>
+              <option value="high">Alto — padrão recomendado</option>
+              <option value="xhigh">Muito alto — tarefas complexas</option>
+              <option value="max">Máximo — custo maior, precisão máxima</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Tamanho máximo da resposta: <b id="cfg-maxtokens-label">8.000</b> tokens</span>
+            <input type="range" id="cfg-maxtokens" min="1000" max="64000" step="1000" value="8000">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cfg-thinking" checked>
+            <span>Mostrar o raciocínio do modelo antes da resposta</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cfg-ferramentas" checked>
+            <span>Deixar ele registrar gastos, pendências e memória sozinho</span>
+          </label>
+          <label class="field">
+            <span>Teto de gasto com a API por mês (US$)</span>
+            <input type="number" id="cfg-teto" min="0" step="1" placeholder="0 = sem limite">
+            <small class="hint">Ao atingir esse valor, o app para de enviar mensagens até você aumentar
+              o teto ou virar o mês. A cobrança real é a do console da Anthropic — isto é uma estimativa
+              baseada nos tokens usados.</small>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cfg-system-custom">
+            <span>Escrever as instruções na mão (ignora o TDAHzeiro)</span>
+          </label>
+          <label class="field hidden" id="field-system">
+            <span>Instruções personalizadas</span>
+            <textarea id="cfg-system" rows="5" placeholder="Escreva do zero como ele deve se comportar."></textarea>
+            <small class="hint">Com isso ligado, a ficha do personagem deixa de valer. Desligue para voltar ao normal.</small>
+          </label>
+          <div class="row-btns">
+            <button class="btn btn-primary" id="btn-save-cfg"><i data-ico="check"></i> Salvar preferências</button>
+            <button class="btn btn-ghost" id="btn-reset-cfg">Restaurar padrões</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Dados</h4></div>
+          <p class="muted small">Tudo fica no armazenamento local deste navegador. Exporte para levar para outro dispositivo.</p>
+          <div class="row-btns">
+            <button class="btn btn-ghost" id="btn-export"><i data-ico="down"></i> Exportar conversas</button>
+            <button class="btn btn-ghost danger" id="btn-wipe">Apagar todas as conversas</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- MINHA VIDA ---------- -->
+    <section class="page" id="page-vida">
+      <div class="page-inner">
+        <div class="sub-tabs" id="vida-tabs">
+          <button class="sub-tab is-active" data-vida="hoje">Hoje</button>
+          <button class="sub-tab" data-vida="pendencias">Pendências</button>
+          <button class="sub-tab" data-vida="dinheiro">Dinheiro</button>
+          <button class="sub-tab" data-vida="memoria">Memória</button>
+        </div>
+        <div id="vida-conteudo"></div>
+      </div>
+    </section>
+
+    <!-- ---------- MEU TDAHZEIRO ---------- -->
+    <section class="page" id="page-persona">
+      <div class="page-inner narrow">
+        <div class="persona-hero" id="persona-hero"></div>
+
+        <div class="card">
+          <div class="card-head"><h4>Ficha do personagem</h4>
+            <button class="btn btn-ghost btn-sm" data-edit-persona="atributos">Ajustar</button></div>
+          <div class="ficha" id="persona-ficha"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Voz</h4>
+            <button class="btn btn-ghost btn-sm" data-edit-persona="voz">Configurar</button></div>
+          <div id="persona-voz"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>O que ele sabe sobre você</h4>
+            <button class="btn btn-ghost btn-sm" data-edit-persona="tdah">Editar</button></div>
+          <div id="persona-contexto"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Instruções geradas</h4>
+            <span class="badge" id="prompt-size">—</span></div>
+          <p class="muted small">É exatamente isto que ele recebe em toda conversa. Tudo vem das suas escolhas.</p>
+          <details class="think"><summary><i data-ico="brain"></i> Ver o texto completo</summary>
+            <div class="think-body" id="prompt-preview"></div></details>
+          <div class="row-btns">
+            <button class="btn btn-primary" data-edit-persona="classe"><i data-ico="spark"></i> Refazer personagem</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- PERFIL ---------- -->
+    <section class="page" id="page-profile">
+      <div class="page-inner narrow">
+        <div class="perfil-social" id="perfil-social"></div>
+
+        <div class="card">
+          <div class="card-head"><h4>Dados da conta</h4></div>
+          <form id="form-profile" class="form">
+            <label class="field"><span>Nome</span><input type="text" name="name" required></label>
+            <label class="field"><span>E-mail</span><input type="email" name="email" required></label>
+            <p class="form-error" data-error></p>
+            <button class="btn btn-primary" type="submit"><i data-ico="check"></i> Salvar</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Alterar senha</h4></div>
+          <form id="form-password" class="form">
+            <label class="field"><span>Senha atual</span><input type="password" name="current" autocomplete="current-password" required></label>
+            <label class="field"><span>Nova senha</span><input type="password" name="next" autocomplete="new-password" required></label>
+            <label class="field"><span>Confirmar nova senha</span><input type="password" name="next2" autocomplete="new-password" required></label>
+            <p class="form-error" data-error></p>
+            <button class="btn btn-primary" type="submit"><i data-ico="lock"></i> Atualizar senha</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h4>Sessão</h4></div>
+          <div class="row-btns">
+            <button class="btn btn-ghost danger" id="btn-logout-2"><i data-ico="exit"></i> Encerrar sessão</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <nav class="tabbar only-mobile">
+    <button class="tab-item is-active" data-nav="dashboard"><i data-ico="grid"></i><span>Painel</span></button>
+    <button class="tab-item" data-nav="chat"><i data-ico="chat"></i><span>Conversar</span></button>
+    <button class="tab-item" data-nav="vida"><i data-ico="heart"></i><span>Minha vida</span></button>
+    <button class="tab-item" data-nav="persona"><i data-ico="spark"></i><span>TDAHzeiro</span></button>
+  </nav>
+</div>
+
+<!-- ============ CRIADOR DE PERSONAGEM ============ -->
+<div id="view-wizard" class="wizard hidden">
+  <div class="wz-shell">
+    <header class="wz-head">
+      <div class="wz-steps" id="wz-steps"></div>
+      <button class="icon-btn" id="wz-close" aria-label="Fechar"><i data-ico="x"></i></button>
+    </header>
+    <div class="wz-body" id="wz-body"></div>
+    <footer class="wz-foot">
+      <button class="btn btn-ghost" id="wz-prev">Voltar</button>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost" id="wz-save">Salvar e sair</button>
+      <button class="btn btn-primary" id="wz-next">Continuar</button>
+    </footer>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script src="js/icons.js"></script>
+<script src="js/markdown.js"></script>
+<script src="js/persona.js"></script>
+<script src="js/store.js"></script>
+<script src="js/memoria.js"></script>
+<script src="js/financas.js"></script>
+<script src="js/ferramentas.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/claude.js"></script>
+<script src="js/wizard.js"></script>
+<script src="js/vida.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
