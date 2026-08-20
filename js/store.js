@@ -22,6 +22,7 @@
     persona:  function (uid) { return NS + 'persona:' + uid; },
     memoria:  function (uid) { return NS + 'memoria:' + uid; },
     financas: function (uid) { return NS + 'financas:' + uid; },
+    apiAlert: function (uid) { return NS + 'api-alert:' + uid; },
     openFinance: function (uid) { return NS + 'open-finance:' + uid; }
   };
 
@@ -406,6 +407,19 @@
     reset: function (uid_) { localStorage.removeItem(K.usage(uid_)); }
   };
 
+  /* Erros de cota sobrevivem a um reload, mas nunca guardam chaves ou resposta crua da API. */
+  var ApiAlert = {
+    get: function (uid_) {
+      return Object.assign({ provider: '', kind: '', at: 0 }, read(K.apiAlert(uid_), {}));
+    },
+    set: function (uid_, value) {
+      var next = Object.assign({ provider: '', kind: '', at: Date.now() }, value || {});
+      write(K.apiAlert(uid_), next);
+      return next;
+    },
+    clear: function (uid_) { localStorage.removeItem(K.apiAlert(uid_)); }
+  };
+
   /* ============================================================
      PROGRESSO / GAMIFICACAO
      ============================================================ */
@@ -490,7 +504,7 @@
   global.Store = {
     keys: K, read: read, write: write, uid: uid,
     Crypto: Crypto, Users: Users, Config: Config,
-    ApiKey: ApiKey, Convs: Convs, Usage: Usage,
+    ApiKey: ApiKey, Convs: Convs, Usage: Usage, ApiAlert: ApiAlert,
     Profile: Profile, Persona: PersonaStore, Progress: Progress, Account: Account,
     DEFAULT_CONFIG: DEFAULT_CONFIG
   };

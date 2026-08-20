@@ -15,6 +15,7 @@
     apiKey: '',
     elevenLabsKey: '',
     keyStatus: 'none',   // none | ok | bad | unknown
+    apiAlerta: null,     // limite confirmado por um provedor externo nesta sessao
     conv: null,
     running: null,       // { abort() } enquanto o modelo responde
     vozAcoes: [],        // ferramentas usadas na rodada de voz atual
@@ -51,6 +52,81 @@
       el.classList.add('out');
       setTimeout(function () { el.remove(); }, 260);
     }, 3200);
+  }
+
+  function nomeDaApi(provider) {
+    if (provider === 'elevenlabs') return 'ElevenLabs';
+    if (provider === 'anthropic') return 'Claude';
+    return 'OpenAI';
+  }
+
+  function alertaApiAtual() {
+    if (!State.user || !State.config) return null;
+    var teto = Store.Usage.teto(State.user.id, State.config.tetoMensalUSD);
+    if (teto.estourou) return { kind: 'teto', teto: teto };
+
+    var alerta = State.apiAlerta || (Store.ApiAlert && Store.ApiAlert.get(State.user.id));
+    if (!alerta || !alerta.kind) return null;
+    // Rate limit nao e cota: expira sozinho para nao prender um aviso temporario.
+    if (alerta.kind === 'rate' && Date.now() - (alerta.at || 0) > 10 * 60 * 1000) {
+      Store.ApiAlert.clear(State.user.id);
+      State.apiAlerta = null;
+      return null;
+    }
+    return alerta;
+  }
+
+  function atualizarAvisoDeLimiteApi() {
+    var banner = $('#api-limit-banner');
+    if (!banner) return;
+    var alerta = alertaApiAtual();
+    if (!alerta) {
+      banner.hidden = true;
+      banner.innerHTML = '';
+      return;
+    }
+
+    var titulo, detalhe, acao = 'Chave & Modelo';
+    if (alerta.kind === 'teto') {
+      titulo = 'Teto de API atingido';
+      detalhe = money(alerta.teto.gasto) + ' de ' + money(alerta.teto.teto) + ' usados neste mes. Os novos envios estao bloqueados.';
+      acao = 'Ajustar teto';
+    } else if (alerta.kind === 'quota') {
+      titulo = 'Limite da ' + nomeDaApi(alerta.provider) + ' atingido';
+      detalhe = 'A API informou que a cota ou os creditos acabaram. Atualize o plano ou aguarde a renovacao.';
+    } else {
+      titulo = nomeDaApi(alerta.provider) + ' temporariamente no limite';
+      detalhe = 'A API pediu uma pausa curta. Tente de novo daqui a pouco.';
+      acao = 'Ver conexao';
+    }
+
+    banner.className = 'api-limit-banner' + (alerta.kind === 'rate' ? ' rate' : '');
+    banner.innerHTML = Icons.svg('bolt', 17) +
+      '<div class="api-limit-copy"><b>' + MD.escape(titulo) + '</b><span>' + MD.escape(detalhe) + '</span></div>' +
+      '<button class="btn btn-ghost" type="button" data-nav="settings">' + MD.escape(acao) + '</button>';
+    banner.hidden = false;
+  }
+
+  function registrarLimiteDaApi(provider, erro, tipo) {
+    if (!State.user || !Store.ApiAlert) return;
+    var texto = String((erro && erro.message) || erro || '').toLowerCase();
+    var semCota = tipo === 'quota_exhausted' || /quota|credit|billing|balance|payment|insufficient/.test(texto);
+    State.apiAlerta = Store.ApiAlert.set(State.user.id, {
+      provider: provider || (State.config && State.config.provider) || 'anthropic',
+      kind: semCota ? 'quota' : 'rate',
+      at: Date.now()
+    });
+    atualizarAvisoDeLimiteApi();
+  }
+
+  function limparAvisoDeLimiteApi(provider) {
+    if (!State.user || !Store.ApiAlert) return;
+    var alerta = State.apiAlerta || Store.ApiAlert.get(State.user.id);
+    if (alerta && alerta.kind && (!provider || alerta.provider === provider)) {
+      Store.ApiAlert.clear(State.user.id);
+      State.apiAlerta = null;
+    }
+    atualizarAvisoDeLimiteApi();
   }
 
   /** O boneco no canto: é você olhando para você o tempo todo. */
@@ -129,6 +205,7 @@
   function enterApp(user, recemCriado) {
     State.user = user;
     State.config = Store.Config.get(user.id);
+    State.apiAlerta = Store.ApiAlert ? Store.ApiAlert.get(user.id) : null;
     if (State.config.provider !== 'anthropic') {
       State.config = Store.Config.set(user.id, { provider: 'anthropic', model: 'claude-sonnet-4-5' });
     }
@@ -155,6 +232,7 @@
     renderVida();
     renderConvList();
     renderDashboard();
+    atualizarAvisoDeLimiteApi();
 
     // Primeiro acesso: criar o personagem antes de qualquer outra coisa.
     if (!State.perfil.onboarded) {
@@ -378,7 +456,8 @@
     desligarAgente(true);
     if (window.Ambiente) Ambiente.pausar();
     Auth.logout();
-    State.user = null; State.apiKey = ''; State.conv = null;
+    State.user = null; State.apiKey = ''; State.conv = null; State.apiAlerta = null;
+    atualizarAvisoDeLimiteApi();
     $('#messages').innerHTML = '';
     showAuth();
     switchTab('login');
@@ -503,6 +582,7 @@
     $('#stat-cost').textContent = money(doMes.cost);
 
     renderTeto();
+    atualizarAvisoDeLimiteApi();
     renderProgress();
     renderAvatarCard();
     renderBriefing();
@@ -1083,6 +1163,7 @@
     // Teto de gasto: a API é o único custo do app, então ela tem freio.
     var t = Store.Usage.teto(State.user.id, State.config.tetoMensalUSD);
     if (t.estourou) {
+      atualizarAvisoDeLimiteApi();
       toast('Teto de ' + money(t.teto) + ' atingido neste mês. Ajuste em Chave & Modelo.', 'bad');
       mostrarBloqueioDeTeto(t);
       setNav('settings');
@@ -1304,6 +1385,9 @@
           scrollToEnd();
 
           if (err.kind === 'auth') { setKeyStatus('bad'); }
+          if (err.kind === 'rate_limit' || err.kind === 'quota_exhausted') {
+            registrarLimiteDaApi(cfg.provider, err, err.kind);
+          }
           if (agenteNavegadorAtivo()) {
             if (filaDeFala) filaDeFala.cancelar();
             State.agente.navegador.ocupado = false;
@@ -1333,6 +1417,8 @@
 
       Store.Usage.add(State.user.id, uso.input, uso.output, cfg.model,
                       { lidos: uso.cacheLido, escritos: uso.cacheEscrito });
+      if (!info.aborted) limparAvisoDeLimiteApi(cfg.provider);
+      else atualizarAvisoDeLimiteApi();
 
       var ganho = premiarPorAcoes(acoes);
       if (!info.aborted) reward(3, 'conversa');
@@ -1879,12 +1965,17 @@
       signal: controller.signal
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
-        throw new Error((body.error && body.error.message) || 'A voz natural nao respondeu.');
+        var erro = new Error((body.error && body.error.message) || 'A voz natural nao respondeu.');
+        if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+          registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+        }
+        throw erro;
       });
       return tocarFluxoDeAudio(res, session, controller);
     }).then(function (saiuAudio) {
       if (!session.ativo || session.falaAbort !== controller) return;
       session.falaAbort = null;
+      limparAvisoDeLimiteApi('elevenlabs');
       aoTerminar(saiuAudio);
     }).catch(function (erro) {
       if (!session.ativo || (erro && erro.name === 'AbortError')) return;
@@ -2021,7 +2112,14 @@
     dados.append('apiKey', State.elevenLabsKey);
     return fetch('/api/speech/transcribe', { method: 'POST', body: dados }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
-        if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao foi possivel transcrever o audio.');
+        if (!res.ok) {
+          var erro = new Error((body.error && body.error.message) || 'Nao foi possivel transcrever o audio.');
+          if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+            registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+          }
+          throw erro;
+        }
+        limparAvisoDeLimiteApi('elevenlabs');
         return String(body.text || '').trim();
       });
     });
@@ -2034,7 +2132,13 @@
       body: JSON.stringify({ apiKey: State.elevenLabsKey })
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
-        if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao foi possivel abrir a transcricao em tempo real.');
+        if (!res.ok) {
+          var erro = new Error((body.error && body.error.message) || 'Nao foi possivel abrir a transcricao em tempo real.');
+          if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+            registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+          }
+          throw erro;
+        }
         if (!body.token) throw new Error('A ElevenLabs nao devolveu o token da transcricao em tempo real.');
         return String(body.token);
       });
@@ -2199,6 +2303,8 @@
             return;
           }
           if (dado.message_type && /error|rate_limited|quota|throttled/i.test(dado.message_type)) {
+            registrarLimiteDaApi('elevenlabs', dado.error || dado.message_type,
+              /quota/i.test(dado.message_type + ' ' + (dado.error || '')) ? 'quota_exhausted' : 'rate_limit');
             usarTranscricaoEmLote(session, new Error(String(dado.error || 'A transcricao em tempo real falhou.')));
           }
         };
@@ -2701,6 +2807,7 @@
       // teto de gasto: a voz consome rápido, então checa sempre
       var t = Store.Usage.teto(State.user.id, State.config.tetoMensalUSD);
       if (t.estourou) {
+        atualizarAvisoDeLimiteApi();
         toast('Teto de ' + money(t.teto) + ' atingido. Desliguei o agente.', 'bad');
         desligarAgente(true);
         mostrarDiagnostico('O teto de ' + money(t.teto) + ' deste mês estourou.');
@@ -2950,10 +3057,14 @@
     }
     return Claude.test(State.apiKey, State.config.provider).then(function () {
       setKeyStatus('ok');
+      limparAvisoDeLimiteApi(State.config.provider);
       if (!quiet) { out.className = 'test-result show ok'; out.textContent = '✓ Chave válida e conectada.'; }
       return true;
     }).catch(function (err) {
       setKeyStatus(err.kind === 'auth' || err.kind === 'permission' ? 'bad' : 'unknown');
+      if (err.kind === 'rate_limit' || err.kind === 'quota_exhausted') {
+        registrarLimiteDaApi(State.config.provider, err, err.kind);
+      }
       if (!quiet) { out.className = 'test-result show bad'; out.textContent = '✕ ' + err.message; }
       else if (err.kind === 'auth') toast('Sua chave da API parece inválida.', 'bad');
       return false;
@@ -3048,12 +3159,19 @@
         body: JSON.stringify({ apiKey: key })
       }).then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (body) {
-          if (!res.ok) throw new Error((body.error && body.error.message) || 'Nao consegui validar a chave de voz.');
+          if (!res.ok) {
+            var erro = new Error((body.error && body.error.message) || 'Nao consegui validar a chave de voz.');
+            if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+              registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+            }
+            throw erro;
+          }
           preencherVozesElevenLabs(body.voices);
           return Store.ApiKey.save(State.user.id, 'elevenlabs', key);
         });
       }).then(function () {
         State.elevenLabsKey = key;
+        limparAvisoDeLimiteApi('elevenlabs');
         State.config = Store.Config.set(State.user.id, {
           elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb',
           elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5'
@@ -3104,6 +3222,7 @@
       applyConfigToForm();
       if (window.Ambiente) Ambiente.definirVolume(volumeAmbiente() / 100);
       renderStatus();
+      atualizarAvisoDeLimiteApi();
       toast('Preferências salvas.', 'ok');
 
       // Voz e modelo só mudam na próxima sessão: reconecta se já estava no ar.
@@ -3285,6 +3404,7 @@
       State.apiKey = '';
       State.elevenLabsKey = '';
       State.keyStatus = 'none';
+      State.apiAlerta = null;
       State.conv = null;
 
       fillModelSelects();
@@ -3297,6 +3417,7 @@
       newConv(true);
       renderConvList();
       renderDashboard();
+      atualizarAvisoDeLimiteApi();
       setNav('dashboard');
       abrirCriador({ modo: 'onboarding' });
       toast('Conta reiniciada. Vamos configurar do zero.', 'ok');

@@ -113,6 +113,10 @@
     var err = body && body.error;
     var type = (err && (err.type || err.code)) || '';
     var msg = (err && err.message) || '';
+    var semCredito = /insufficient[_ -]?quota|quota|credit|billing|balance|payment/i.test(String(type) + ' ' + msg);
+    if (semCredito) {
+      return ApiError('A API informou que sua cota ou créditos acabaram. Atualize o plano ou aguarde a renovação.', 'quota_exhausted', status);
+    }
     switch (status) {
       case 400:
         return ApiError('Requisicao invalida: ' + (msg || 'confira modelo, chave e configuracoes.'), 'invalid_request', 400);
