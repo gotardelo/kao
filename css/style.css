@@ -985,6 +985,9 @@ h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
 .sub-tabs{border-radius:6px;background:#181816}.sub-tab{border-radius:5px}.sub-tab.is-active{background:var(--accent);color:#111409}
 .persona-hero,.perfil-social{border:1px solid var(--border-soft);border-radius:8px;background:#171714}
 .wz-shell,.wizard{background:#0a0a09}.wz-shell{border:1px solid var(--border-soft);border-radius:8px}.wz-mini,.classe,.check.big{border:1px solid var(--border-soft);border-radius:7px;background:#171714}
+.reset-account-card{border-color:rgba(255,128,106,.35);background:linear-gradient(135deg,rgba(255,128,106,.09),#151513 42%)}
+.reset-account-card .btn.danger{border-color:rgba(255,128,106,.5);color:#ffab99}
+.reset-account-card .btn.danger:hover{background:rgba(255,128,106,.14);color:#ffe7e0}
 
 @media (max-width:899px){
   .topbar{height:58px;flex-basis:58px;padding:0 14px}

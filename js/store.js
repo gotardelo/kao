@@ -476,11 +476,22 @@
     reset: function (uid_) { localStorage.removeItem(K.progress(uid_)); }
   };
 
+  /* Account credentials stay separate so a person can restart their setup
+     without creating a new login. */
+  var Account = {
+    reset: function (uid_) {
+      var marker = ':' + uid_;
+      Object.keys(localStorage).forEach(function (key) {
+        if (key.indexOf(NS) === 0 && key.indexOf(marker) > -1) localStorage.removeItem(key);
+      });
+    }
+  };
+
   global.Store = {
     keys: K, read: read, write: write, uid: uid,
     Crypto: Crypto, Users: Users, Config: Config,
     ApiKey: ApiKey, Convs: Convs, Usage: Usage,
-    Profile: Profile, Persona: PersonaStore, Progress: Progress,
+    Profile: Profile, Persona: PersonaStore, Progress: Progress, Account: Account,
     DEFAULT_CONFIG: DEFAULT_CONFIG
   };
 })(window);

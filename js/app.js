@@ -2850,6 +2850,53 @@
     f.email.value = u.email;
   }
 
+  function resetarConta() {
+    if (!State.user) return;
+    if (!confirm('Resetar sua conta neste navegador? Suas chaves, conversas, memoria, financas, avatar e progresso serao apagados. Seu login e senha vao continuar os mesmos.')) return;
+
+    var uid = State.user.id;
+    var btn = $('#btn-reset-account');
+    if (btn) btn.disabled = true;
+    if (State.running) { State.running.abort(); State.running = null; }
+    desligarAgente(true);
+    Persona.Voice.calar();
+    if (window.Ambiente) Ambiente.pausar();
+
+    var desconectarBanco = window.OpenFinance
+      ? OpenFinance.desconectar(uid)
+      : Promise.resolve();
+
+    desconectarBanco.then(function () {
+      Store.Account.reset(uid);
+      State.config = Store.Config.get(uid);
+      State.perfil = Store.Profile.get(uid);
+      State.persona = Store.Persona.get(uid);
+      State.apiKey = '';
+      State.elevenLabsKey = '';
+      State.keyStatus = 'none';
+      State.conv = null;
+
+      fillModelSelects();
+      applyConfigToForm();
+      renderElevenLabsKeyUI();
+      renderAmbienteUI();
+      renderProfile();
+      renderPersona();
+      renderVida();
+      newConv(true);
+      renderConvList();
+      renderDashboard();
+      setNav('dashboard');
+      abrirCriador({ modo: 'onboarding' });
+      toast('Conta reiniciada. Vamos configurar do zero.', 'ok');
+    }).catch(function (erro) {
+      var mensagem = (erro && erro.message) || 'Nao consegui desconectar o banco agora.';
+      alert('Nada foi apagado. Primeiro preciso desconectar seu banco com seguranca. ' + mensagem);
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
   function bindProfile() {
     $('#form-profile').addEventListener('submit', function (e) {
       e.preventDefault();
@@ -2875,6 +2922,8 @@
         .catch(function (err) { showError(f, err.message); })
         .then(function () { btn.disabled = false; });
     });
+
+    $('#btn-reset-account').addEventListener('click', resetarConta);
   }
 
   document.addEventListener('DOMContentLoaded', boot);
