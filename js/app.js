@@ -13,6 +13,7 @@
     perfil: null,        // perfil social do usuário
     persona: null,       // o TDAHzeiro
     apiKey: '',
+    openaiVoiceKey: '',  // opcional: fala neural, mesmo quando o chat usa Claude
     keyStatus: 'none',   // none | ok | bad | unknown
     conv: null,
     running: null,       // { abort() } enquanto o modelo responde
@@ -168,6 +169,9 @@
       }
       // O agente entra junto com você: é o ponto do app.
       talvezLigarAgenteSozinho();
+    });
+    Store.ApiKey.load(user.id, 'openai').then(function (key) {
+      State.openaiVoiceKey = key || '';
     });
 
     var last = Store.Convs.all(user.id)[0];
@@ -1608,22 +1612,64 @@
     return { ok: true, motivo: '' };
   }
 
+  function falarNatural(texto, aoTerminar) {
+    var session = State.agente.navegador;
+    var key = State.openaiVoiceKey;
+    var input = Persona.Voice.limpar(texto).slice(0, 4096);
+    if (!session || !key || !input) return Promise.resolve(false);
+    return fetch('/api/speech', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        apiKey: key,
+        input: input,
+        voice: State.config.vozRealtime || 'marin'
+      })
+    }).then(function (res) {
+      if (!res.ok) throw new Error('A voz neural nao esta disponivel para esta chave.');
+      return res.blob();
+    }).then(function (blob) {
+      return new Promise(function (resolve) {
+        var url = URL.createObjectURL(blob);
+        if (!session.ativo) { URL.revokeObjectURL(url); resolve(false); return; }
+        var audio = new Audio(url);
+        session.audio = audio;
+        session.audioUrl = url;
+        var terminou = false;
+        function fechar(ok) {
+          if (terminou) return;
+          terminou = true;
+          if (session.audio === audio) session.audio = null;
+          if (session.audioUrl === url) session.audioUrl = null;
+          URL.revokeObjectURL(url);
+          if (ok && aoTerminar) aoTerminar();
+          resolve(ok);
+        }
+        audio.onended = function () { fechar(true); };
+        audio.onerror = function () { fechar(false); };
+        audio.play().catch(function () { fechar(false); });
+      });
+    }).catch(function () { return false; });
+  }
+
   function falarDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo) return;
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
     atualizarAgenteUI('ligado', 'respondendo');
-    var falou = Persona.Voice.falar(texto, State.persona.voz, function () {
+    function continuar() {
       if (!session.ativo) return;
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
       iniciarEscutaDoNavegador();
-    });
-    if (!falou) {
-      session.ocupado = false;
-      iniciarEscutaDoNavegador();
     }
+    falarNatural(texto, continuar).then(function (falou) {
+      if (falou) return;
+      if (!session.ativo) return;
+      var fallback = Persona.Voice.falar(texto, State.persona.voz, continuar);
+      if (!fallback) continuar();
+    });
   }
 
   function enviarFalaDoNavegador(texto) {
@@ -1701,6 +1747,8 @@
     session.ativo = false;
     Persona.Ditado.parar();
     Persona.Voice.calar();
+    if (session.audio) { try { session.audio.pause(); } catch (_) {} }
+    if (session.audioUrl) URL.revokeObjectURL(session.audioUrl);
     var parcial = $('#voz-parcial');
     if (parcial) parcial.remove();
     State.agente.navegador = null;
@@ -2196,6 +2244,7 @@
       btn.disabled = true;
       Store.ApiKey.save(State.user.id, State.config.provider, key).then(function () {
         State.apiKey = key;
+        if (State.config.provider === 'openai') State.openaiVoiceKey = key;
         return checkKey();
       }).then(function (ok) {
         if (ok) {
@@ -2210,6 +2259,7 @@
       if (!confirm('Remover a chave salva deste dispositivo?')) return;
       Store.ApiKey.clear(State.user.id, State.config.provider);
       State.apiKey = '';
+      if (State.config.provider === 'openai') State.openaiVoiceKey = '';
       $('#api-key').value = '';
       $('#key-result').className = 'test-result';
       setKeyStatus('none');
