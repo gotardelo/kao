@@ -412,8 +412,8 @@
     var greet = h < 5 ? 'Boa madrugada' : h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
     $('#hello-name').textContent = greet + ', ' + u.name.split(' ')[0] + '.';
     $('#hello-sub').textContent = convs.length
-      ? 'Você tem ' + convs.length + (convs.length === 1 ? ' conversa salva' : ' conversas salvas') + ' neste dispositivo.'
-      : 'Comece uma conversa — eu guardo tudo aqui no seu navegador.';
+      ? 'Base carregada. Escolha uma missão curta e a gente resolve em uma rodada.'
+      : 'Escolha uma missão. Eu faço uma pergunta por vez e devolvo só o próximo passo.';
 
     var doMes = Store.Usage.doMes(u.id);
     $('#stat-convs').textContent = nf(convs.length);

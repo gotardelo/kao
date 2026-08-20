@@ -777,3 +777,70 @@ input[type=range]{width:100%;accent-color:var(--accent);height:24px;cursor:point
   .skins{grid-template-columns:repeat(6,1fr)}
   .tracos{grid-template-columns:repeat(3,1fr)}
 }
+
+/* ============================================================
+   MODO MISSOES - sci-fi cartoon original, feito para decisoes rapidas
+   ============================================================ */
+:root{
+  --bg:#071316;
+  --bg-2:#0c1d20;
+  --panel:#112528;
+  --panel-2:#18363a;
+  --border:rgba(133,239,219,.16);
+  --border-soft:rgba(133,239,219,.09);
+  --text:#effffb;
+  --muted:#9bbab5;
+  --accent:#14bfa5;
+  --accent-2:#5fe9d5;
+  --accent-soft:rgba(20,191,165,.18);
+  --ok:#b9e746;
+  --warn:#ffd65a;
+  --danger:#ff826a;
+  --radius:8px;
+  --radius-sm:7px;
+  --shadow:0 18px 48px -25px rgba(0,0,0,.88);
+}
+body{background:#071316;letter-spacing:0}
+h1,h2,h3,h4{letter-spacing:0}
+.sidebar{background:rgba(7,22,24,.92);border-right-color:rgba(95,233,213,.12)}
+.nav-item{border-radius:7px}
+.nav-item.is-active{background:rgba(20,191,165,.18);box-shadow:inset 3px 0 0 var(--accent);color:#eafff9}
+.btn{border-radius:7px;letter-spacing:0}
+.btn-primary{background:var(--accent);color:#03110f;box-shadow:0 4px 0 rgba(0,0,0,.2)}
+.btn-primary:hover:not(:disabled){background:#5fe9d5;color:#041312}
+.btn-ghost{background:rgba(148,236,218,.1);border-color:rgba(148,236,218,.15)}
+.card,.stat{border:1px solid var(--border-soft);border-radius:8px;background:rgba(17,37,40,.94)}
+.card-head h4{font-size:16px;text-transform:uppercase;letter-spacing:.06em;color:#bff9ee}
+.eyebrow{color:#b9e746;font-size:12px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.mission-hero{
+  position:relative;isolation:isolate;min-height:330px;padding:28px;overflow:hidden;
+  border:1px solid rgba(95,233,213,.28);border-radius:8px;
+  background:#071316 url('../assets/portal-missions.png') center right/cover no-repeat;
+}
+.mission-hero::after{content:'';position:absolute;inset:0;z-index:0;background:rgba(7,19,22,.56)}
+.mission-copy{position:relative;z-index:1;max-width:410px;display:flex;flex-direction:column;align-items:flex-start;gap:13px}
+.mission-hero h3{font-size:30px;line-height:1.06;text-shadow:0 2px 12px rgba(0,0,0,.45)}
+.mission-hero>div>.muted{font-size:16px;color:#c9dedb;max-width:31ch}
+.mission-enter{align-self:flex-end;position:relative;z-index:1}
+.mission-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:3px}
+.mission-choice{display:inline-flex;align-items:center;gap:8px;padding:11px 13px;border:1px solid rgba(185,231,70,.3);border-radius:7px;background:rgba(4,19,18,.75);color:#effffb;font-size:14px;font-weight:700;transition:transform .16s,background .16s,border-color .16s}
+.mission-choice:hover{transform:translateY(-2px);background:rgba(20,191,165,.23);border-color:#5fe9d5}
+.mission-choice.is-primary{background:#b9e746;border-color:#d9ff71;color:#14200a}
+.mission-choice.is-primary:hover{background:#d9ff71}
+.progress-panel,.briefing{border-radius:8px;border:1px solid rgba(185,231,70,.18)}
+.chip{border-radius:7px;border:1px solid rgba(95,233,213,.2);background:rgba(20,191,165,.1)}
+.chip:hover{background:rgba(20,191,165,.24);border-color:#5fe9d5}
+.copilot-panel{border-radius:8px;border-color:rgba(95,233,213,.22);background:rgba(10,30,32,.93)}
+.composer-wrap{border-top-color:rgba(95,233,213,.14);background:rgba(7,19,22,.95)}
+.composer{border-radius:8px;border-color:rgba(95,233,213,.2);background:rgba(17,37,40,.96)}
+.send{background:#b9e746;color:#112007;border-radius:7px}
+.stat-ico.v{background:rgba(20,191,165,.18);color:#5fe9d5}
+.stat-ico.c{background:rgba(255,130,106,.18);color:#ff9b86}
+.stat-ico.g{background:rgba(185,231,70,.18);color:#d9ff71}
+.stat-ico.o{background:rgba(255,214,90,.18);color:#ffe39a}
+@media (max-width:719px){
+  .mission-hero{min-height:390px;background-position:66% center;padding:22px 18px}
+  .mission-hero::after{background:rgba(7,19,22,.82)}
+  .mission-hero h3{font-size:27px}
+  .mission-enter{align-self:flex-start}
+}

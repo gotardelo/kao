@@ -158,13 +158,17 @@
     <!-- ---------- PAINEL ---------- -->
     <section class="page is-active" id="page-dashboard">
       <div class="page-inner">
-        <div class="hero-card">
-          <div>
+        <div class="hero-card mission-hero">
+          <div class="mission-copy">
             <p class="eyebrow">Bem-vindo de volta</p>
             <h3 id="hello-name">Olá!</h3>
+            <div class="mission-actions">
+              <button class="mission-choice is-primary" data-ritual="travei"><i data-ico="bolt"></i> Estou travado</button>
+              <button class="mission-choice" data-ritual="manha"><i data-ico="bulb"></i> Organizar agora</button>
+            </div>
             <p class="muted" id="hello-sub">Seu copiloto está pronto quando você estiver.</p>
           </div>
-          <button class="btn btn-primary" data-nav="chat"><i data-ico="bolt"></i> Conversar agora</button>
+          <button class="btn btn-ghost mission-enter" data-nav="chat"><i data-ico="spark"></i> Abrir missões</button>
         </div>
 
         <div class="progress-panel" id="progress-panel"></div>
@@ -234,8 +238,9 @@
           <div class="copilot-diag" id="copilot-diag" hidden></div>
           <div class="chat-empty" id="chat-empty">
             <div id="chat-empty-ava"><div class="logo-mark xl">T</div></div>
-            <h3>Por onde a gente começa?</h3>
-            <p class="muted">Fala do jeito que der — bagunçado serve. Eu organizo, anoto e devolvo um passo só.</p>
+            <p class="eyebrow">Rodada 1 de 1</p>
+            <h3>Qual portal a gente abre?</h3>
+            <p class="muted">Escolhe uma missão. Eu faço a próxima pergunta e devolvo um passo só.</p>
             <div class="chips">
               <button class="chip" data-ritual="manha">Bom dia — o que importa hoje</button>
               <button class="chip" data-ritual="travei">Travei — me tira daqui</button>
