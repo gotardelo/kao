@@ -856,3 +856,149 @@ h1,h2,h3,h4{letter-spacing:0}
   .mission-hero h3{font-size:27px}
   .mission-enter{align-self:flex-start}
 }
+
+/* ============================================================
+   TDAHZEI SIGNAL
+   Linguagem editorial de produto: preto, superfícies precisas,
+   mídia em movimento e informação pronta para leitura rápida.
+   ============================================================ */
+:root{
+  --bg:#0a0a09;
+  --bg-2:#10100f;
+  --panel:#151513;
+  --panel-2:#20201d;
+  --border:rgba(247,247,238,.16);
+  --border-soft:rgba(247,247,238,.09);
+  --text:#f7f7ee;
+  --muted:#a7a79e;
+  --accent:#d9ff52;
+  --accent-2:#7cf0d1;
+  --accent-soft:rgba(217,255,82,.14);
+  --ok:#d9ff52;
+  --warn:#ffc66e;
+  --danger:#ff806a;
+  --radius:8px;
+  --radius-sm:6px;
+  --shadow:0 24px 60px -34px rgba(0,0,0,.94);
+}
+
+body{background:var(--bg);letter-spacing:0}
+h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
+.logo-mark{border-radius:7px;background:#f7f7ee;color:#0a0a09;font-size:17px}
+.sidebar{background:#0c0c0b;border-right:1px solid var(--border-soft);padding:18px 12px}
+.side-head{padding:4px 5px 10px}
+.auth-brand{font-size:18px;letter-spacing:0}
+.nav{gap:4px}
+.nav-item{border-radius:6px;padding:10px 12px;color:#aaa9a1}
+.nav-item:hover{background:#1b1b18;color:var(--text)}
+.nav-item.is-active{background:#f1f1e7;color:#0b0b09;box-shadow:none;font-weight:700}
+.nav-item.is-active svg{stroke-width:2.4}
+.conv{border-radius:6px}
+.conv.is-active{background:#20201d;color:var(--text)}
+.api-pill{font-family:var(--mono);font-size:11px;letter-spacing:0}
+
+.topbar{height:62px;flex-basis:62px;background:rgba(10,10,9,.94);border-bottom-color:var(--border-soft);padding:0 28px}
+.topbar h2{font-size:14px;font-weight:700;text-transform:uppercase;color:#c8c8be}
+.avatar{border-radius:7px;background:#ecece2;color:#10100e;font-weight:800}
+.avatar:hover{background:var(--accent)}
+.ambient-btn{border-radius:6px}
+.ambient-btn.is-active{background:rgba(124,240,209,.12);color:var(--accent-2);border-color:rgba(124,240,209,.32)}
+
+.page-inner{max-width:1180px;gap:20px;padding:30px 34px calc(56px + var(--safe-b))}
+.page-inner.narrow{max-width:820px}
+.card,.stat{background:var(--panel);border:1px solid var(--border-soft);border-radius:8px;box-shadow:none}
+.card{padding:24px}
+.card-head{margin-bottom:17px}
+.card-head h4{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#c8c8be}
+.badge{border-radius:999px;background:#242420;color:#d3d3c9;font-size:11px;font-weight:700}
+.btn{border-radius:6px;font-weight:700}
+.btn-primary{background:var(--accent);color:#111409;box-shadow:none}
+.btn-primary:hover:not(:disabled){background:#ecff98;color:#111409}
+.btn-ghost{background:rgba(247,247,238,.06);border:1px solid rgba(247,247,238,.14);color:var(--text)}
+.btn-ghost:hover:not(:disabled){background:rgba(247,247,238,.13);border-color:rgba(247,247,238,.28)}
+
+.mission-hero{
+  min-height:390px;padding:34px;overflow:hidden;border:1px solid rgba(217,255,82,.35);border-radius:8px;
+  background:#10130f url('../assets/portal-missions.png') center right/cover no-repeat;
+  box-shadow:var(--shadow);
+}
+.mission-hero::after{background:linear-gradient(90deg,rgba(9,10,8,.96) 0%,rgba(9,10,8,.78) 42%,rgba(9,10,8,.18) 100%)}
+.mission-copy{max-width:500px;gap:16px}
+.eyebrow{margin-bottom:0;color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.mission-hero h3{font-size:54px;line-height:1.01;max-width:11ch;text-shadow:none}
+.mission-hero>div>.muted{margin-top:1px;color:#d5d5cc;font-size:17px;line-height:1.45;max-width:36ch}
+.mission-actions{gap:8px;margin-top:6px}
+.mission-choice{border-radius:6px;background:rgba(9,10,8,.7);border-color:rgba(247,247,238,.22);font-size:13px}
+.mission-choice:hover{background:rgba(247,247,238,.13);border-color:var(--accent);transform:translateY(-1px)}
+.mission-choice.is-primary{background:var(--accent);border-color:var(--accent);color:#111409}
+.mission-choice.is-primary:hover{background:#ecff98}
+.mission-enter{background:rgba(9,10,8,.58);border-color:rgba(247,247,238,.24)}
+
+.experience-reel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.experience-card{
+  position:relative;isolation:isolate;min-height:248px;padding:18px;overflow:hidden;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:11px;
+  border:1px solid var(--border-soft);border-radius:8px;background:#171714;text-align:left;
+  transition:border-color .2s,transform .2s,background .2s;
+}
+.experience-card:hover{transform:translateY(-3px);border-color:rgba(247,247,238,.34)}
+.experience-card:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.experience-card::before{content:'';position:absolute;inset:0;z-index:-2;background:linear-gradient(180deg,rgba(8,8,7,.04),rgba(8,8,7,.96) 88%)}
+.experience-card::after{content:'';position:absolute;inset:0;z-index:-3;background-position:center;background-size:cover;transition:transform .7s cubic-bezier(.2,.8,.2,1)}
+.experience-card:hover::after{transform:scale(1.06)}
+.experience-focus::after{background-image:url('../assets/portal-missions.png');background-position:77% 42%}
+.experience-money::after{background-image:url('../assets/portal-missions.png');background-position:96% 80%;filter:hue-rotate(54deg) saturate(.72) brightness(.76)}
+.experience-voice{background:#101815}
+.experience-meta{display:flex;justify-content:space-between;width:100%;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;color:#c8c8bd}
+.experience-meta b{color:var(--accent)}
+.experience-copy{display:flex;flex-direction:column;gap:5px;max-width:28ch}
+.experience-copy strong{font-size:20px;line-height:1.08;font-weight:700;color:var(--text)}
+.experience-copy small{font-size:13px;line-height:1.4;color:#d0d0c6}
+.experience-arrow{position:absolute;top:16px;right:16px;width:30px;height:30px;display:grid;place-items:center;border:1px solid rgba(247,247,238,.25);border-radius:50%;font-size:17px;color:var(--text);transition:background .2s,color .2s}
+.experience-card:hover .experience-arrow{background:var(--accent);color:#111409;border-color:var(--accent)}
+.experience-visual{position:absolute;top:22px;left:20px;right:20px;height:74px;display:flex;align-items:center;gap:5px;opacity:.8}
+.experience-visual i{display:block;width:5px;border-radius:5px;background:var(--accent);animation:signalBeat 2.1s ease-in-out infinite}
+.experience-visual i:nth-child(1){height:22px}.experience-visual i:nth-child(2){height:52px;animation-delay:.12s}.experience-visual i:nth-child(3){height:38px;animation-delay:.24s}.experience-visual i:nth-child(4){height:66px;animation-delay:.36s}.experience-visual i:nth-child(5){height:28px;animation-delay:.48s}
+.experience-focus .experience-visual{opacity:.55}.experience-focus .experience-visual i{background:var(--accent-2)}
+.voice-wave{left:20px;right:auto;gap:6px}.voice-wave i{width:5px;background:var(--accent-2)}.voice-wave i:nth-child(6){height:46px;animation-delay:.6s}.voice-wave i:nth-child(7){height:25px;animation-delay:.72s}
+.money-pulse{gap:10px}.money-pulse i{width:38px;height:38px;border-radius:50%;background:transparent;border:1px solid var(--warn);animation:moneyPulse 2.2s ease-out infinite}.money-pulse i:nth-child(2){animation-delay:.45s}.money-pulse i:nth-child(3){animation-delay:.9s}
+@keyframes signalBeat{50%{transform:scaleY(.46);opacity:.42}}
+@keyframes moneyPulse{50%{transform:scale(.76);opacity:.42}}
+
+.progress-panel{padding:22px;background:#11110f;border:1px solid var(--border-soft);border-radius:8px}
+.xp-tile{background:#20201d;border-radius:6px;padding:14px}
+.xp-bar{background:#2c2c27;border-radius:99px}.xp-bar span{background:var(--accent)}
+.stat{border-radius:8px;padding:18px}.stat b{font-size:27px}.stat-ico{border-radius:6px}
+.shortcuts{gap:10px}.shortcut{border:1px solid var(--border-soft);border-radius:7px;background:#1b1b18;padding:18px}.shortcut:hover{background:#242420}.shortcut i{color:var(--accent)}
+.recent-item{border-radius:6px;background:#1b1b18;border:1px solid transparent}.recent-item:hover{background:#23231f;border-color:var(--border-soft)}
+
+.chat{background:linear-gradient(180deg,#0c0c0b 0%,#10100e 100%)}
+.copilot-panel{max-width:980px;margin-top:20px;border:1px solid var(--border-soft);border-radius:8px;background:#171714;padding:14px 16px}
+.copilot-panel.live{background:#151b14;border-color:rgba(217,255,82,.3)}
+.copilot-orb{border-radius:6px;background:#292923}.copilot-panel.live .copilot-orb{background:rgba(217,255,82,.13)}
+.chat-empty{max-width:760px;padding:82px 20px 30px}.chat-empty h3{font-size:42px;letter-spacing:0}.chat-empty .muted{font-size:17px}
+.chip{border-radius:6px;border:1px solid var(--border-soft);background:#1b1b18;font-size:13px}.chip:hover{background:#262620;border-color:rgba(217,255,82,.42)}
+#messages{max-width:920px;gap:22px}.msg-content{font-size:16px;line-height:1.62}.msg.bot .msg-ava{background:var(--accent);color:#111409}.msg-ava{border-radius:6px}
+.composer-wrap{background:rgba(12,12,11,.96);border-top-color:var(--border-soft);padding:12px 28px calc(14px + var(--safe-b))}.composer-meta,.composer,.composer-hint{max-width:920px}.composer{border-radius:8px;background:#191916;border-color:rgba(247,247,238,.15)}.composer:focus-within{border-color:rgba(217,255,82,.58);box-shadow:0 0 0 3px rgba(217,255,82,.08)}.send{border-radius:6px;background:var(--accent);color:#111409}.mini-select{border-radius:5px;background:#20201d}
+
+.field input,.field select,.field textarea,.input-wrap{border-radius:6px}.field input,.field select,.field textarea{border-color:var(--border-soft);background:#10100f}.input-wrap{background:#10100f;border-color:var(--border-soft)}
+.sub-tabs{border-radius:6px;background:#181816}.sub-tab{border-radius:5px}.sub-tab.is-active{background:var(--accent);color:#111409}
+.persona-hero,.perfil-social{border:1px solid var(--border-soft);border-radius:8px;background:#171714}
+.wz-shell,.wizard{background:#0a0a09}.wz-shell{border:1px solid var(--border-soft);border-radius:8px}.wz-mini,.classe,.check.big{border:1px solid var(--border-soft);border-radius:7px;background:#171714}
+
+@media (max-width:899px){
+  .topbar{height:58px;flex-basis:58px;padding:0 14px}
+  .sidebar{padding-bottom:calc(16px + var(--safe-b))}
+  .page-inner{padding:20px 16px calc(92px + var(--safe-b));gap:16px}
+  .mission-hero{min-height:412px;padding:22px 20px;background-position:68% center}
+  .mission-hero::after{background:linear-gradient(180deg,rgba(9,10,8,.76),rgba(9,10,8,.96) 78%)}
+  .mission-hero h3{font-size:36px;max-width:10ch}
+  .experience-reel{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,78vw);grid-template-columns:none;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x mandatory}
+  .experience-card{min-height:226px;scroll-snap-align:start}
+  .chat-empty{padding-top:58px}.chat-empty h3{font-size:32px}
+  .composer-wrap{padding-left:14px;padding-right:14px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .experience-card,.experience-card::after,.experience-visual i,.money-pulse i{animation:none !important;transition:none !important}
+}

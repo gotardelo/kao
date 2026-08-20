@@ -2331,10 +2331,12 @@
     var btn = $('#btn-copilot');
     var mini = $('#btn-copilot-mini');
     var mudo = $('#btn-copilot-mudo');
+    var reelVoice = $('#btn-voice-reel');
 
     if (agente) agente.addEventListener('click', alternarAgente);
     if (btn) btn.addEventListener('click', alternarAgente);
     if (mini) mini.addEventListener('click', alternarAgente);
+    if (reelVoice) reelVoice.addEventListener('click', function () { setNav('chat'); alternarAgente(); });
     if (mudo) {
       mudo.addEventListener('click', function () {
         if (agenteNavegadorAtivo()) alternarMudoDoNavegador(); else Voz.alternarMudo();
