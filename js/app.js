@@ -15,6 +15,8 @@
     apiKey: '',
     elevenLabsKey: '',
     elevenLabsKeyInvalida: '',
+    elevenLabsServidor: false,   // deploy ja tem chave salva; ninguem precisa colar a sua
+
     keyStatus: 'none',   // none | ok | bad | unknown
     apiAlerta: null,     // limite confirmado por um provedor externo nesta sessao
     conv: null,
@@ -34,7 +36,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-  var APP_VERSION = '2026.08.21.27';
+  var APP_VERSION = '2026.08.21.28';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -318,7 +320,8 @@
     // Carrega as chaves antes de decidir se o agente entra com voz natural.
     Promise.all([
       Store.ApiKey.load(user.id, State.config.provider).catch(function () { return ''; }),
-      Store.ApiKey.load(user.id, 'elevenlabs').catch(function () { return ''; })
+      Store.ApiKey.load(user.id, 'elevenlabs').catch(function () { return ''; }),
+      checarChaveElevenLabsDoServidor()
     ]).then(function (keys) {
       State.apiKey = keys[0] || '';
       State.elevenLabsKey = keys[1] || '';
@@ -334,7 +337,7 @@
           toast('Adicione sua chave da API em "Chave & Modelo" para começar.');
         }
       }
-      var carregarVozes = chaveElevenLabsPareceValida(State.elevenLabsKey)
+      var carregarVozes = chaveElevenLabsPareceValida(State.elevenLabsKey) || State.elevenLabsServidor
         ? carregarVozesElevenLabs(State.elevenLabsKey, true).catch(function () { return []; })
         : Promise.resolve([]);
       carregarVozes.then(function () {
@@ -2243,7 +2246,19 @@
 
   function usarVozNatural() {
     var key = chaveElevenLabsAtual();
-    return chaveElevenLabsPareceValida(key) && State.elevenLabsKeyInvalida !== key;
+    if (key) return chaveElevenLabsPareceValida(key) && State.elevenLabsKeyInvalida !== key;
+    return !!State.elevenLabsServidor;
+  }
+
+  /** Se o deploy ja tem chave, a voz natural funciona sem ninguem colar nada. */
+  function checarChaveElevenLabsDoServidor() {
+    return fetch('/api/speech/status', { headers: { accept: 'application/json' } })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (body) {
+        State.elevenLabsServidor = !!(body && body.serverKey);
+        return State.elevenLabsServidor;
+      })
+      .catch(function () { State.elevenLabsServidor = false; return false; });
   }
 
   function chaveElevenLabsAtual() {
@@ -2268,6 +2283,8 @@
   function marcarChaveElevenLabsInvalida(erro, silencioso) {
     var key = chaveElevenLabsAtual();
     if (key) State.elevenLabsKeyInvalida = key;
+    // Sem chave local, quem falhou foi a do servidor: para de tentar por ela.
+    else State.elevenLabsServidor = false;
     var msg = erroElevenLabsDeChave(erro) || (key && !chaveElevenLabsPareceValida(key))
       ? mensagemChaveElevenLabsInvalida()
       : ((erro && erro.message) || 'A chave de voz da ElevenLabs nao foi aceita.');
@@ -2277,9 +2294,49 @@
     return msg;
   }
 
+  /** Uma falha e corte ou ruido; tres seguidas indicam navegador sem voz de verdade. */
+  var MAX_FALHAS_VOZ_NAVEGADOR = 3;
+
+  function vozNavegadorIndisponivel(session) {
+    return !!session && (session.falhasVozNavegador || 0) >= MAX_FALHAS_VOZ_NAVEGADOR;
+  }
+
+  function registrarFalhaVozNavegador(session) {
+    if (!session) return false;
+    session.falhasVozNavegador = (session.falhasVozNavegador || 0) + 1;
+    return vozNavegadorIndisponivel(session);
+  }
+
+  function limparFalhasVozNavegador(session) {
+    if (session) session.falhasVozNavegador = 0;
+  }
+
+  /** Avisa uma vez por resposta, e explica no painel quando desiste de vez. */
+  function avisarFalhaDeVoz(session) {
+    if (!session) return;
+    if (usarVozNatural()) {
+      if (session.avisoVoz) return;
+      session.avisoVoz = true;
+      toast('A voz natural nao tocou agora. Continuei te ouvindo; teste a chave e a voz em Chave & Modelo.', 'bad');
+      return;
+    }
+    var jaDesistira = vozNavegadorIndisponivel(session);
+    var desistiuAgora = registrarFalhaVozNavegador(session) && !jaDesistira;
+    if (desistiuAgora) {
+      var msg = 'A fala do navegador falhou ' + MAX_FALHAS_VOZ_NAVEGADOR +
+        ' vezes seguidas, entao parei de tentar. Salve a chave da ElevenLabs para usar voz natural.';
+      toast(msg, 'bad');
+      mostrarDiagnostico(msg);
+      return;
+    }
+    if (jaDesistira || session.avisoVoz) return;
+    session.avisoVoz = true;
+    toast('A fala do navegador falhou agora, mas eu continuei te ouvindo.', 'bad');
+  }
+
   function falaNativaBloqueiaEscuta(session) {
     return !usarVozNatural() &&
-      !(session && session.falaNavegadorIndisponivel) &&
+      !vozNavegadorIndisponivel(session) &&
       Persona.Voice.falando();
   }
 
@@ -2372,7 +2429,7 @@
   }
 
   function iniciarDetectorDeInterrupcao(session) {
-    if (!session || !session.ativo || session.mudo || State.config.vozInterromper === false || session.interruptor) return;
+    if (!session || !session.ativo || session.mudo || usarVozNatural() || State.config.vozInterromper === false || session.interruptor) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) return;
 
     getUserMediaAgente().then(function (stream) {
@@ -2428,6 +2485,7 @@
   function falarDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo) return;
+    session.avisoVoz = false;              // cada resposta pode avisar de novo se falhar
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
     iniciarDetectorDeInterrupcao(session);
@@ -2437,13 +2495,8 @@
       if (!session.ativo) return;
       pararDetectorDeInterrupcao(session);
       if (window.Ambiente) Ambiente.reduzir(true);
-      if (saiuAudio === false && !session.avisoVoz) {
-        session.avisoVoz = true;
-        toast(usarVozNatural()
-          ? 'A voz natural nao tocou agora. Continuei te ouvindo; teste a chave e a voz em Chave & Modelo.'
-          : 'A fala do navegador falhou, mas eu continuei te ouvindo. Salve a chave da ElevenLabs para usar voz natural.', 'bad');
-        if (!usarVozNatural()) session.falaNavegadorIndisponivel = true;
-      }
+      if (saiuAudio === false) avisarFalhaDeVoz(session);
+      else limparFalhasVozNavegador(session);
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
       retomarEscutaComCalma(session);
@@ -2452,7 +2505,7 @@
       falarComElevenLabs(texto, session, continuar);
       return;
     }
-    if (session.falaNavegadorIndisponivel) {
+    if (vozNavegadorIndisponivel(session)) {
       continuar(false);
       return;
     }
@@ -2478,7 +2531,7 @@
       session.audio = audio;
       session.audioUrl = url;
       var terminou = false;
-      var limite = setTimeout(function () { finalizar(true); }, 65000);
+      var limite = setTimeout(function () { finalizar(true); }, 5 * 60 * 1000);
       function finalizar(saiuAudio) {
         if (terminou) return;
         terminou = true;
@@ -2504,18 +2557,19 @@
   }
 
   function fallbackFalaNativa(texto, session, aoTerminar) {
-    if (!Persona.Voice.disponivel() || session.falaNavegadorIndisponivel) {
+    if (!Persona.Voice.disponivel() || vozNavegadorIndisponivel(session)) {
       aoTerminar(false);
       return;
     }
     var falou = Persona.Voice.falar(texto, State.persona.voz, function (ok) {
-      if (!ok) session.falaNavegadorIndisponivel = true;
+      if (ok) limparFalhasVozNavegador(session);
+      else registrarFalhaVozNavegador(session);
       aoTerminar(ok);
     }, function (estado) {
       if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
     });
     if (!falou) {
-      session.falaNavegadorIndisponivel = true;
+      registrarFalhaVozNavegador(session);
       aoTerminar(false);
     }
   }
@@ -2669,7 +2723,7 @@
       if (erroElevenLabsDeChave(erro)) {
         marcarChaveElevenLabsInvalida(erro);
         session.avisoVoz = true;
-      } else {
+      } else if (!session.avisoVoz) {
         session.avisoVoz = true;
         toast(erro && erro.name === 'AbortError'
           ? 'A voz natural demorou demais. Voltei para a escuta.'
@@ -2680,7 +2734,13 @@
     });
   }
 
+  /** Trecho curto demais pica a fala; longo demais atrasa o primeiro audio. */
+  var FALA_TRECHO_MIN = 160;
+  var FALA_TRECHO_ALVO = 320;
+  var FALA_TRECHO_MAX = 360;
+
   function criarFilaFalaDoAgente(session) {
+    session.avisoVoz = false;              // cada resposta pode avisar de novo se falhar
     var fila = [];
     var pendente = '';
     var lidoAte = 0;
@@ -2694,21 +2754,34 @@
     };
     session.filaFala = api;
 
+    /** Gruda pedacos curtos no trecho anterior para a voz sair em frases inteiras. */
+    function enfileirarTrecho(texto) {
+      var trecho = String(texto || '').trim();
+      if (!trecho) return;
+      var ultimo = fila.length ? fila[fila.length - 1] : '';
+      var algumCurto = ultimo.length < FALA_TRECHO_MIN || trecho.length < FALA_TRECHO_MIN;
+      if (ultimo && algumCurto && ultimo.length + trecho.length + 1 <= FALA_TRECHO_MAX) {
+        fila[fila.length - 1] = ultimo + ' ' + trecho;
+        return;
+      }
+      fila.push(trecho);
+    }
+
     function extrair(final) {
       var partida;
       while ((partida = pendente.match(/^([\s\S]*?[.!?…](?:\s|$))/))) {
         var frase = partida[1].trim();
         pendente = pendente.slice(partida[1].length);
-        if (frase) fila.push(frase);
+        enfileirarTrecho(frase);
       }
-      if (pendente.length > 190) {
-        var corte = pendente.lastIndexOf(' ', 170);
-        if (corte < 70) corte = 170;
-        fila.push(pendente.slice(0, corte).trim());
+      if (pendente.length > FALA_TRECHO_MAX) {
+        var corte = pendente.lastIndexOf(' ', FALA_TRECHO_ALVO);
+        if (corte < FALA_TRECHO_MIN) corte = FALA_TRECHO_ALVO;
+        enfileirarTrecho(pendente.slice(0, corte));
         pendente = pendente.slice(corte).trim();
       }
       if (final && pendente.trim()) {
-        fila.push(pendente.trim());
+        enfileirarTrecho(pendente);
         pendente = '';
       }
     }
@@ -2740,7 +2813,6 @@
       prepararConversa();
       falarComElevenLabs(trecho, session, function (saiuAudio) {
         falando = false;
-        if (!saiuAudio) fila = [];
         proxima();
       });
     }
@@ -3420,6 +3492,7 @@
       ultimaFalaEm: Date.now(),
       microfoneConfirmado: false,
       avisoVoz: false,
+      falhasVozNavegador: 0,
       escutaLiberadaEm: 0,
       retomadaTimer: null
     };
@@ -3925,8 +3998,16 @@
       result.textContent = mensagemChaveElevenLabsInvalida();
       return;
     }
-    result.className = State.elevenLabsKey ? 'test-result show ok' : 'test-result';
     var vozNome = nomeDaVozElevenLabs(State.config && State.config.elevenLabsVoiceId);
+    if (!State.elevenLabsKey && State.elevenLabsServidor) {
+      input.placeholder = 'Ja tem chave salva no servidor - so cole aqui se quiser usar a sua.';
+      result.className = 'test-result show ok';
+      result.textContent = vozNome
+        ? 'Voz natural ligada pela chave do servidor: ' + vozNome + '.'
+        : 'Voz natural ligada pela chave do servidor.';
+      return;
+    }
+    result.className = State.elevenLabsKey ? 'test-result show ok' : 'test-result';
     result.textContent = State.elevenLabsKey
       ? (vozNome ? 'Voz natural pronta: ' + vozNome + '.' : 'Voz natural pronta para o proximo agente.')
       : '';
@@ -4096,6 +4177,8 @@
   function carregarVozesElevenLabs(key, quiet) {
     key = String(key || '').trim();
     var out = $('#elevenlabs-result');
+    // Sem chave local, o servidor completa com a dele; so desiste se nem ele tiver.
+    if (!key && State.elevenLabsServidor) return listarVozesElevenLabs('', quiet, out);
     if (key.length < 12) {
       preencherVozesElevenLabs([]);
       return Promise.resolve([]);
@@ -4106,6 +4189,10 @@
       return Promise.reject(new Error(mensagemChaveElevenLabsInvalida()));
     }
     if (State.elevenLabsKeyInvalida === key) State.elevenLabsKeyInvalida = '';
+    return listarVozesElevenLabs(key, quiet, out);
+  }
+
+  function listarVozesElevenLabs(key, quiet, out) {
     if (!quiet && out) {
       out.className = 'test-result show';
       out.textContent = 'Carregando vozes naturais...';

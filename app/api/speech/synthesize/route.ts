@@ -1,3 +1,4 @@
+import { resolverChave } from '../chave';
 const ELEVENLABS_TTS = 'https://api.elevenlabs.io/v1/text-to-speech';
 const DEFAULT_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
 const DEFAULT_MODEL = 'eleven_multilingual_v2';
@@ -6,13 +7,6 @@ const SUPPORTED_MODELS = new Set([
   'eleven_multilingual_v2',
   'eleven_flash_v2_5',
 ]);
-
-function apiKey(value: unknown) {
-  const key = String(value || '').trim();
-  if (key.length < 12) throw new Error('Cole uma chave valida da ElevenLabs para usar a voz natural.');
-  if (!/^sk_[a-zA-Z0-9_-]+$/.test(key)) throw new Error('A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.');
-  return key;
-}
 
 function modelId(value: unknown) {
   const model = String(value || DEFAULT_MODEL).trim();
@@ -53,7 +47,7 @@ async function upstreamError(response: Response) {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as Record<string, unknown>;
-    const key = apiKey(body.apiKey);
+    const key = resolverChave(body.apiKey, 'para usar a voz natural');
     const text = String(body.text || '').trim().slice(0, 5000);
     if (!text) throw new Error('Nao ha texto para falar.');
 

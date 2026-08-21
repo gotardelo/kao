@@ -270,6 +270,9 @@
   /* ============================================================
      VOZ — Web Speech API (nativa do navegador, custo zero)
      ============================================================ */
+  /** Margem generosa por letra: a fala real gasta ~70ms, o dobro cobre vozes lentas. */
+  var MS_POR_LETRA = 130;
+
   var Voice = {
     disponivel: function () { return typeof speechSynthesis !== 'undefined'; },
 
@@ -334,48 +337,82 @@
       var terminou = false;
       var vigia = null;
       var limite = null;
+      var pulso = null;
 
       function terminar(saiuAudio) {
         if (terminou) return;
         terminou = true;
         if (vigia) clearTimeout(vigia);
         if (limite) clearTimeout(limite);
+        if (pulso) clearInterval(pulso);
         if (aoTerminar) aoTerminar(saiuAudio);
+      }
+
+      /** O Chrome corta a fala sozinho perto dos 15s; pausar e retomar zera esse relogio. */
+      function manterVivo() {
+        if (pulso) clearInterval(pulso);
+        pulso = setInterval(function () {
+          if (terminou) { clearInterval(pulso); pulso = null; return; }
+          if (!speechSynthesis.speaking || speechSynthesis.paused) return;
+          try { speechSynthesis.pause(); speechSynthesis.resume(); } catch (_) {}
+        }, 9000);
+      }
+
+      /** Corta so depois de um tempo sem sinal de vida, nunca no meio de uma fala longa. */
+      function adiarLimite(restante) {
+        if (limite) clearTimeout(limite);
+        limite = setTimeout(function () {
+          if (terminou) return;
+          try { speechSynthesis.cancel(); } catch (_) {}
+          terminar(!!iniciou);
+        }, Math.max(15000, Math.min(180000, restante * MS_POR_LETRA)));
       }
 
       u.onstart = function () {
         iniciou = true;
         if (vigia) clearTimeout(vigia);
+        vigia = null;
+        manterVivo();
+        adiarLimite(limpo.length);
         if (aoEstado) aoEstado('started');
+      };
+      u.onboundary = function (evento) {
+        if (!terminou) adiarLimite(limpo.length - ((evento && evento.charIndex) || 0));
       };
       u.onend = function () { terminar(true); };
       u.onerror = function (evento) {
-        if (aoEstado) aoEstado('error', (evento && evento.error) || 'synthesis-failed');
+        var causa = (evento && evento.error) || 'synthesis-failed';
+        // Corte pedido por nos (barge-in, calar, proxima fala) nao e defeito do navegador.
+        if (causa === 'interrupted' || causa === 'canceled') { terminar(!!iniciou); return; }
+        if (aoEstado) aoEstado('error', causa);
         terminar(false);
       };
 
-      try {
-        speechSynthesis.cancel();
-        speechSynthesis.resume();
-        speechSynthesis.speak(u);
-      } catch (e) {
-        return false;
-      }
-
-      // Chrome can accept speak() without ever starting audible output.
-      vigia = setTimeout(function () {
-        if (!iniciou) {
+      function emitir() {
+        try {
+          speechSynthesis.resume();
+          speechSynthesis.speak(u);
+        } catch (e) {
+          terminar(false);
+          return;
+        }
+        // O Chrome aceita speak() sem nunca comecar a sair som.
+        vigia = setTimeout(function () {
+          if (iniciou || terminou) return;
           try { speechSynthesis.cancel(); } catch (_) {}
           if (aoEstado) aoEstado('error', 'speech-not-started');
           terminar(false);
-        }
-      }, 2400);
-      limite = setTimeout(function () {
-        if (!terminou) {
-          try { speechSynthesis.cancel(); } catch (_) {}
-          terminar(!!iniciou);
-        }
-      }, Math.max(8000, Math.min(45000, limpo.length * 95)));
+        }, 3500);
+      }
+
+      var ocupado = false;
+      try { ocupado = !!(speechSynthesis.speaking || speechSynthesis.pending); } catch (_) {}
+      if (!ocupado) {
+        emitir();                          // sem cancel antes: preserva o gesto do usuario
+      } else {
+        try { speechSynthesis.cancel(); } catch (_) {}
+        setTimeout(emitir, 90);            // o Chrome engole speak() logo apos cancel()
+      }
       return true;
     },
 
