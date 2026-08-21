@@ -14,6 +14,7 @@
     persona: null,       // o TDAHzeiro
     apiKey: '',
     elevenLabsKey: '',
+    elevenLabsKeyInvalida: '',
     keyStatus: 'none',   // none | ok | bad | unknown
     apiAlerta: null,     // limite confirmado por um provedor externo nesta sessao
     conv: null,
@@ -33,7 +34,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-  var APP_VERSION = '2026.08.21.25';
+  var APP_VERSION = '2026.08.21.26';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -321,6 +322,9 @@
     ]).then(function (keys) {
       State.apiKey = keys[0] || '';
       State.elevenLabsKey = keys[1] || '';
+      State.elevenLabsKeyInvalida = State.elevenLabsKey && !chaveElevenLabsPareceValida(State.elevenLabsKey)
+        ? State.elevenLabsKey
+        : '';
       renderKeyUI();
       renderElevenLabsKeyUI();
       if (State.apiKey) checkKey(true);
@@ -330,7 +334,7 @@
           toast('Adicione sua chave da API em "Chave & Modelo" para começar.');
         }
       }
-      var carregarVozes = State.elevenLabsKey
+      var carregarVozes = chaveElevenLabsPareceValida(State.elevenLabsKey)
         ? carregarVozesElevenLabs(State.elevenLabsKey, true).catch(function () { return []; })
         : Promise.resolve([]);
       carregarVozes.then(function () {
@@ -2238,12 +2242,39 @@
   }
 
   function usarVozNatural() {
-    return chaveElevenLabsAtual().length >= 12;
+    var key = chaveElevenLabsAtual();
+    return chaveElevenLabsPareceValida(key) && State.elevenLabsKeyInvalida !== key;
   }
 
   function chaveElevenLabsAtual() {
     var input = $('#elevenlabs-key');
     return String((input && input.value && input.value.trim()) || State.elevenLabsKey || '').trim();
+  }
+
+  function chaveElevenLabsPareceValida(key) {
+    key = String(key || '').trim();
+    return key.length >= 12 && /^sk_[A-Za-z0-9_-]+$/.test(key);
+  }
+
+  function mensagemChaveElevenLabsInvalida() {
+    return 'A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.';
+  }
+
+  function erroElevenLabsDeChave(erro) {
+    var texto = String((erro && erro.message) || erro || '').toLowerCase();
+    return /api key id used as api key|only valid api keys|api keys start|invalid api key|unauthori[sz]ed|xi-api-key/.test(texto);
+  }
+
+  function marcarChaveElevenLabsInvalida(erro, silencioso) {
+    var key = chaveElevenLabsAtual();
+    if (key) State.elevenLabsKeyInvalida = key;
+    var msg = erroElevenLabsDeChave(erro) || (key && !chaveElevenLabsPareceValida(key))
+      ? mensagemChaveElevenLabsInvalida()
+      : ((erro && erro.message) || 'A chave de voz da ElevenLabs nao foi aceita.');
+    renderElevenLabsKeyUI();
+    mostrarDiagnostico(msg);
+    if (!silencioso) toast(msg, 'bad');
+    return msg;
   }
 
   function falaNativaBloqueiaEscuta(session) {
@@ -2409,7 +2440,7 @@
       if (saiuAudio === false && !session.avisoVoz) {
         session.avisoVoz = true;
         toast(usarVozNatural()
-          ? 'A voz natural nao iniciou. Teste a chave e a voz em Chave & Modelo.'
+          ? 'A voz natural nao tocou agora. Continuei te ouvindo; teste a chave e a voz em Chave & Modelo.'
           : 'A fala do navegador falhou, mas eu continuei te ouvindo. Salve a chave da ElevenLabs para usar voz natural.', 'bad');
         if (!usarVozNatural()) session.falaNavegadorIndisponivel = true;
       }
@@ -2598,9 +2629,15 @@
       limparTimeout();
       if (!session.ativo) return;
       if (erro && erro.name === 'AbortError' && session.falaAbort !== controller) return;
-      toast(erro && erro.name === 'AbortError'
-        ? 'A voz natural demorou demais. Voltei para a escuta.'
-        : ((erro && erro.message) || 'A voz natural nao respondeu.'), 'bad');
+      if (erroElevenLabsDeChave(erro)) {
+        marcarChaveElevenLabsInvalida(erro);
+        session.avisoVoz = true;
+      } else {
+        session.avisoVoz = true;
+        toast(erro && erro.name === 'AbortError'
+          ? 'A voz natural demorou demais. Voltei para a escuta.'
+          : ((erro && erro.message) || 'A voz natural nao respondeu.'), 'bad');
+      }
       if (session.falaAbort === controller) session.falaAbort = null;
       aoTerminar(false);
     });
@@ -3845,6 +3882,12 @@
     if (!input || !State.user) return;
     input.value = State.elevenLabsKey || '';
     if (!result) return;
+    if (State.elevenLabsKey && !chaveElevenLabsPareceValida(State.elevenLabsKey)) {
+      State.elevenLabsKeyInvalida = State.elevenLabsKey;
+      result.className = 'test-result show bad';
+      result.textContent = mensagemChaveElevenLabsInvalida();
+      return;
+    }
     result.className = State.elevenLabsKey ? 'test-result show ok' : 'test-result';
     var vozNome = nomeDaVozElevenLabs(State.config && State.config.elevenLabsVoiceId);
     result.textContent = State.elevenLabsKey
@@ -4020,6 +4063,12 @@
       preencherVozesElevenLabs([]);
       return Promise.resolve([]);
     }
+    if (!chaveElevenLabsPareceValida(key)) {
+      State.elevenLabsKeyInvalida = key;
+      preencherVozesElevenLabs([]);
+      return Promise.reject(new Error(mensagemChaveElevenLabsInvalida()));
+    }
+    if (State.elevenLabsKeyInvalida === key) State.elevenLabsKeyInvalida = '';
     if (!quiet && out) {
       out.className = 'test-result show';
       out.textContent = 'Carregando vozes naturais...';
@@ -4032,6 +4081,10 @@
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
           var erro = new Error((body.error && body.error.message) || 'Nao consegui carregar suas vozes.');
+          if (erroElevenLabsDeChave(erro)) {
+            erro.message = mensagemChaveElevenLabsInvalida();
+            State.elevenLabsKeyInvalida = key;
+          }
           if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
             registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
           }
@@ -4069,7 +4122,7 @@
   }
 
   function testarVozNaturalElevenLabs() {
-    var key = String(($('#elevenlabs-key') && $('#elevenlabs-key').value) || State.elevenLabsKey || '').trim();
+    var key = chaveElevenLabsAtual();
     var out = $('#elevenlabs-result');
     var btn = $('#btn-test-elevenlabs-voice');
     var voiceId = vozElevenLabsAtual();
@@ -4081,6 +4134,14 @@
       if (out) {
         out.className = 'test-result show bad';
         out.textContent = 'Cole e salve uma chave da ElevenLabs antes de testar.';
+      }
+      return;
+    }
+    if (!chaveElevenLabsPareceValida(key)) {
+      State.elevenLabsKeyInvalida = key;
+      if (out) {
+        out.className = 'test-result show bad';
+        out.textContent = mensagemChaveElevenLabsInvalida();
       }
       return;
     }
@@ -4113,6 +4174,10 @@
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
         var erro = new Error((body.error && body.error.message) || 'Nao consegui gerar o teste de voz.');
+        if (erroElevenLabsDeChave(erro)) {
+          erro.message = mensagemChaveElevenLabsInvalida();
+          State.elevenLabsKeyInvalida = key;
+        }
         if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
           registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
         }
@@ -4250,6 +4315,13 @@
         out.textContent = 'Cole uma chave valida da ElevenLabs.';
         return;
       }
+      if (!chaveElevenLabsPareceValida(key)) {
+        State.elevenLabsKeyInvalida = key;
+        out.className = 'test-result show bad';
+        out.textContent = mensagemChaveElevenLabsInvalida();
+        return;
+      }
+      if (State.elevenLabsKeyInvalida === key) State.elevenLabsKeyInvalida = '';
       btn.disabled = true;
       out.className = 'test-result show';
       out.textContent = 'Validando a chave de voz...';

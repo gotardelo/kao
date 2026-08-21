@@ -10,6 +10,7 @@ const SUPPORTED_MODELS = new Set([
 function apiKey(value: unknown) {
   const key = String(value || '').trim();
   if (key.length < 12) throw new Error('Cole uma chave valida da ElevenLabs para usar a voz natural.');
+  if (!/^sk_[a-zA-Z0-9_-]+$/.test(key)) throw new Error('A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.');
   return key;
 }
 
@@ -42,7 +43,11 @@ function voiceSettings(value: unknown) {
 
 async function upstreamError(response: Response) {
   const body = await response.json().catch(() => ({})) as { detail?: { message?: string }; error?: { message?: string } };
-  return body.detail?.message || body.error?.message || response.statusText || 'A sintese da ElevenLabs falhou.';
+  const message = body.detail?.message || body.error?.message || response.statusText || 'A sintese da ElevenLabs falhou.';
+  if (/api key id used as api key|only valid api keys|api keys start|invalid api key|unauthori[sz]ed/i.test(message)) {
+    return 'A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.';
+  }
+  return message;
 }
 
 export async function POST(request: Request) {
