@@ -30,6 +30,7 @@ const SYNC_PREFIXES = [
   'profile',
   'persona',
   'memoria',
+  'vault',
   'financas',
   'api-alert',
   'open-finance',

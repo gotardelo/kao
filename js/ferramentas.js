@@ -104,6 +104,18 @@
       'Consulta a situação financeira completa do mês: gastos por categoria, contas em aberto, metas e saldo. Use antes de dar qualquer conselho sobre dinheiro, para falar com número na mão em vez de achismo.',
       {}, []),
 
+    tool('registrar_no_vault',
+      'Grava uma nota solta no 00-Inbox do JarvisOS. Use quando aparecer uma ideia, referencia, pedido, decisao ou contexto que ainda nao virou tarefa/fato.',
+      { texto: S('Nota curta para entrar no 00-Inbox em markdown simples.') }),
+
+    tool('executar_caixa',
+      'Executa a skill caixa da manha do JarvisOS: le inbox recente, pendencias de ontem, escolhe 3 prioridades e grava no Diario de hoje.',
+      {}, []),
+
+    tool('fechar_dia',
+      'Executa o fechamento do dia no JarvisOS. Use quando a pessoa pedir fechamento, revisao do dia ou quiser preparar amanha.',
+      { resumo: S('Resumo curto do dia em primeira pessoa, incluindo o que ficou para amanha quando houver.') }),
+
     toolSolta('atualizar_avatar',
       'Ajusta o BONECO que representa a pessoa no app. Use sempre que ela contar algo sobre a própria ' +
       'aparência, o que veste, o bicho que tem em casa ou o que vive por perto — mesmo de passagem, ' +
@@ -244,6 +256,26 @@
       return L.join('\n');
     },
 
+    registrar_no_vault: function (uid, i) {
+      var item = Store.Vault.addInbox(uid, i.texto, 'agente');
+      return item ? 'Entrou no 00-Inbox do JarvisOS: "' + item.texto + '".' : 'Nao consegui gravar no vault.';
+    },
+
+    executar_caixa: function (uid) {
+      var r = Store.Vault.caixa(uid);
+      return [
+        'Caixa da manha gravada no Diario/' + Store.Vault.dataBR(Store.Vault.hoje()) + '.md.',
+        'O que caiu: ' + (r.inbox.length ? r.inbox.map(function (n) { return n.texto; }).join(' | ') : 'inbox limpa'),
+        'Onde parei: ' + (r.pendentes.length ? r.pendentes.join(' | ') : 'sem pendencia de ontem'),
+        'As 3 de hoje: ' + r.prioridades.join(' | ')
+      ].join('\n');
+    },
+
+    fechar_dia: function (uid, i) {
+      Store.Vault.fechamento(uid, i.resumo);
+      return 'Fechamento gravado no Diario/' + Store.Vault.dataBR(Store.Vault.hoje()) + '.md.';
+    },
+
     anotar_diario: function (uid, i) {
       Memoria.anotarDia(uid, i.resumo);
       return 'Anotado no diário de ' + Memoria.hoje() + '.';
@@ -299,6 +331,9 @@
         case 'definir_orcamento':  return 'ajustando orçamento';
         case 'criar_meta':         return 'criando meta';
         case 'guardar_na_meta':    return 'guardando dinheiro';
+        case 'registrar_no_vault': return 'gravando no JarvisOS';
+        case 'executar_caixa':     return 'rodando caixa da manha';
+        case 'fechar_dia':         return 'fechando o dia';
         case 'consultar_financas': return 'consultando suas finanças';
         case 'anotar_diario':      return 'escrevendo no diário';
         case 'atualizar_avatar':   return 'desenhando você';

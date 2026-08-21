@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
 <meta name="theme-color" content="#000000">
-<meta name="app-version" content="2026.08.21.23">
+<meta name="app-version" content="2026.08.21.24">
 <meta name="description" content="TDAHZEI — seu copiloto pessoal com IA, disponível 24h no navegador.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,10 +12,10 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon.svg">
-<link rel="stylesheet" href="css/style.css?v=2026.08.21.23">
-<link rel="stylesheet" href="css/persona.css?v=2026.08.21.23">
-<link rel="stylesheet" href="css/vida.css?v=2026.08.21.23">
-<link rel="stylesheet" href="css/neuro.css?v=2026.08.21.23">
+<link rel="stylesheet" href="css/style.css?v=2026.08.21.24">
+<link rel="stylesheet" href="css/persona.css?v=2026.08.21.24">
+<link rel="stylesheet" href="css/vida.css?v=2026.08.21.24">
+<link rel="stylesheet" href="css/neuro.css?v=2026.08.21.24">
 <title>TDAHZEI · Copiloto</title>
 </head>
 <body class="neurofx">
@@ -137,6 +137,7 @@
     <nav class="nav">
       <button class="nav-item is-active" data-nav="dashboard"><i data-ico="grid"></i> Painel</button>
       <button class="nav-item" data-nav="chat"><i data-ico="chat"></i> Conversar</button>
+      <button class="nav-item" data-nav="jarvis"><i data-ico="brain"></i> JarvisOS</button>
       <button class="nav-item" data-nav="vida"><i data-ico="heart"></i> Minha vida</button>
       <button class="nav-item" data-nav="persona"><i data-ico="spark"></i> Meu TDAHzeiro</button>
       <button class="nav-item" data-nav="profile"><i data-ico="user"></i> Meu perfil</button>
@@ -209,6 +210,12 @@
             <span class="experience-visual money-pulse" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="experience-meta">MAPA DE GRANA <b>03</b></span>
             <span class="experience-copy"><strong>Ver o que importa agora</strong><small>Receitas, gastos e contas sem abrir outra tela.</small></span>
+            <span class="experience-arrow" aria-hidden="true">&#8599;</span>
+          </button>
+          <button class="experience-card experience-jarvis" data-nav="jarvis" type="button">
+            <span class="experience-visual jarvis-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span class="experience-meta">JARVISOS <b>04</b></span>
+            <span class="experience-copy"><strong>Memoria que executa</strong><small>Inbox, diario, contexto e skills sincronizados.</small></span>
             <span class="experience-arrow" aria-hidden="true">&#8599;</span>
           </button>
         </section>
@@ -310,6 +317,71 @@
       </div>
     </section>
 
+    <!-- ---------- JARVISOS ---------- -->
+    <section class="page" id="page-jarvis">
+      <div class="page-inner">
+        <div class="jarvis-hero">
+          <div class="jarvis-face" aria-hidden="true">
+            <span></span><i></i><i></i><i></i>
+          </div>
+          <div class="jarvis-copy">
+            <p class="eyebrow">JarvisOS</p>
+            <h3>Fala. Lembra. Executa.</h3>
+            <p class="muted">A base viva do agente: 00-Inbox, Diario, contexto, pendencias e skills.</p>
+            <div class="jarvis-actions">
+              <button class="btn btn-primary" data-jarvis-skill="caixa" type="button"><i data-ico="bolt"></i> Caixa da manha</button>
+              <button class="btn btn-ghost" data-jarvis-skill="plano" type="button"><i data-ico="grid"></i> Plano</button>
+              <button class="btn btn-ghost" data-jarvis-skill="fechamento" type="button"><i data-ico="check"></i> Fechamento</button>
+              <button class="btn btn-ghost" data-jarvis-skill="tendencias" type="button"><i data-ico="spark"></i> Tendencias</button>
+              <button class="btn btn-ghost" data-jarvis-skill="metricas" type="button"><i data-ico="chip"></i> Metricas</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="jarvis-rack" id="jarvis-status"></div>
+
+        <div class="jarvis-grid">
+          <div class="card jarvis-console">
+            <div class="card-head"><h4>Diario ativo</h4><button class="btn btn-ghost btn-sm" id="btn-vault-export" type="button"><i data-ico="down"></i> Exportar</button></div>
+            <pre id="jarvis-output"></pre>
+          </div>
+
+          <div class="card jarvis-inbox">
+            <div class="card-head"><h4>00-Inbox</h4></div>
+            <label class="field">
+              <span>Nova nota</span>
+              <textarea id="vault-inbox-text" rows="4" placeholder="Ideia, decisao, referencia, contexto solto..."></textarea>
+            </label>
+            <div class="row-btns">
+              <button class="btn btn-primary" id="btn-vault-inbox" type="button"><i data-ico="plus"></i> Adicionar</button>
+            </div>
+            <div class="vault-list" id="jarvis-inbox-list"></div>
+          </div>
+
+          <div class="card jarvis-files">
+            <div class="card-head"><h4>Arquivos base</h4><button class="btn btn-primary btn-sm" id="btn-vault-save" type="button"><i data-ico="check"></i> Salvar</button></div>
+            <label class="field">
+              <span>contexto.md</span>
+              <textarea id="vault-contexto" rows="7" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>pendencias.md</span>
+              <textarea id="vault-pendencias" rows="6" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>.claudeignore</span>
+              <textarea id="vault-ignore" rows="5" spellcheck="false"></textarea>
+            </label>
+          </div>
+
+          <div class="card jarvis-history">
+            <div class="card-head"><h4>Diarios recentes</h4></div>
+            <div class="vault-list" id="jarvis-diario-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ---------- CHAVE & MODELO ---------- -->
     <section class="page" id="page-settings">
       <div class="page-inner narrow">
@@ -394,11 +466,11 @@
           <label class="field">
             <span>Qualidade da voz natural</span>
             <select id="cfg-elevenlabs-model">
-              <option value="eleven_turbo_v2_5">Turbo v2.5 - natural e rapido (recomendado)</option>
-              <option value="eleven_multilingual_v2">Multilingual v2 - maxima naturalidade</option>
+              <option value="eleven_multilingual_v2">Multilingual v2 - maxima naturalidade (recomendado)</option>
+              <option value="eleven_turbo_v2_5">Turbo v2.5 - natural e rapido</option>
               <option value="eleven_flash_v2_5">Flash v2.5 - resposta mais rapida</option>
             </select>
-            <small class="hint">Turbo e o equilibrio para conversa. Flash reduz o tempo de resposta, mas pode perder naturalidade.</small>
+            <small class="hint">Multilingual prioriza naturalidade em portugues. Flash reduz o tempo de resposta, mas pode perder presenca.</small>
           </label>
           <div class="voice-shaper" aria-label="Modelagem da voz natural">
             <div class="mini-head">
@@ -628,6 +700,7 @@
   <nav class="tabbar only-mobile">
     <button class="tab-item is-active" data-nav="dashboard"><i data-ico="grid"></i><span>Painel</span></button>
     <button class="tab-item" data-nav="chat"><i data-ico="chat"></i><span>Conversar</span></button>
+    <button class="tab-item" data-nav="jarvis"><i data-ico="brain"></i><span>Jarvis</span></button>
     <button class="tab-item" data-nav="vida"><i data-ico="heart"></i><span>Minha vida</span></button>
     <button class="tab-item" data-nav="persona"><i data-ico="spark"></i><span>TDAHzeiro</span></button>
   </nav>
@@ -653,21 +726,21 @@
 <aside id="api-limit-banner" class="api-limit-banner" role="alert" aria-live="assertive" hidden></aside>
 <div id="toasts" class="toasts"></div>
 
-<script src="js/icons.js?v=2026.08.21.23"></script>
-<script src="js/markdown.js?v=2026.08.21.23"></script>
-<script src="js/persona.js?v=2026.08.21.23"></script>
-<script src="js/avatar.js?v=2026.08.21.23"></script>
-<script src="js/store.js?v=2026.08.21.23"></script>
-<script src="js/memoria.js?v=2026.08.21.23"></script>
-<script src="js/financas.js?v=2026.08.21.23"></script>
-<script src="js/open-finance.js?v=2026.08.21.23"></script>
-<script src="js/ferramentas.js?v=2026.08.21.23"></script>
-<script src="js/auth.js?v=2026.08.21.23"></script>
-<script src="js/claude.js?v=2026.08.21.23"></script>
-<script src="js/voz.js?v=2026.08.21.23"></script>
-<script src="js/ambiente.js?v=2026.08.21.23"></script>
-<script src="js/wizard.js?v=2026.08.21.23"></script>
-<script src="js/vida.js?v=2026.08.21.23"></script>
-<script src="js/app.js?v=2026.08.21.23"></script>
+<script src="js/icons.js?v=2026.08.21.24"></script>
+<script src="js/markdown.js?v=2026.08.21.24"></script>
+<script src="js/persona.js?v=2026.08.21.24"></script>
+<script src="js/avatar.js?v=2026.08.21.24"></script>
+<script src="js/store.js?v=2026.08.21.24"></script>
+<script src="js/memoria.js?v=2026.08.21.24"></script>
+<script src="js/financas.js?v=2026.08.21.24"></script>
+<script src="js/open-finance.js?v=2026.08.21.24"></script>
+<script src="js/ferramentas.js?v=2026.08.21.24"></script>
+<script src="js/auth.js?v=2026.08.21.24"></script>
+<script src="js/claude.js?v=2026.08.21.24"></script>
+<script src="js/voz.js?v=2026.08.21.24"></script>
+<script src="js/ambiente.js?v=2026.08.21.24"></script>
+<script src="js/wizard.js?v=2026.08.21.24"></script>
+<script src="js/vida.js?v=2026.08.21.24"></script>
+<script src="js/app.js?v=2026.08.21.24"></script>
 </body>
 </html>

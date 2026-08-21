@@ -21,6 +21,7 @@
     profile:  function (uid) { return NS + 'profile:' + uid; },
     persona:  function (uid) { return NS + 'persona:' + uid; },
     memoria:  function (uid) { return NS + 'memoria:' + uid; },
+    vault:    function (uid) { return NS + 'vault:' + uid; },
     financas: function (uid) { return NS + 'financas:' + uid; },
     apiAlert: function (uid) { return NS + 'api-alert:' + uid; },
     openFinance: function (uid) { return NS + 'open-finance:' + uid; }
@@ -29,7 +30,7 @@
   var SYNC_QUEUE_KEY = NS + 'sync:queue';
   var SYNC_PREFIXES = [
     'convs', 'config', 'usage', 'progress', 'avatar', 'profile',
-    'persona', 'memoria', 'financas', 'api-alert', 'open-finance'
+    'persona', 'memoria', 'vault', 'financas', 'api-alert', 'open-finance'
   ];
   var syncTimer = null;
   var syncInFlight = null;
@@ -448,7 +449,7 @@
     effort: 'high',
     vozRealtime: 'marin',
     elevenLabsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
-    elevenLabsModel: 'eleven_turbo_v2_5',
+    elevenLabsModel: 'eleven_multilingual_v2',
     elevenLabsStability: 48,
     elevenLabsSimilarity: 75,
     elevenLabsStyle: 12,
@@ -621,6 +622,270 @@
       write(K.convs(uid_), Convs.all(uid_).filter(function (c) { return c.id !== id; }));
     },
     wipe: function (uid_) { remove(K.convs(uid_)); }
+  };
+
+  /* ============================================================
+     JARVISOS VAULT
+     Memoria em markdown sincronizada: 00-Inbox, Diario, contexto.md
+     e pendencias.md. E o Obsidian do PDF, adaptado para o app online.
+     ============================================================ */
+  function dataISO(offset) {
+    var d = new Date();
+    d.setDate(d.getDate() + (offset || 0));
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function dataBR(iso) {
+    var p = String(iso || dataISO()).split('-');
+    return p.length === 3 ? p[2] + '-' + p[1] + '-' + p[0] : String(iso || '');
+  }
+
+  function tituloDia(iso) {
+    try {
+      return new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', {
+        weekday: 'long', day: '2-digit', month: 'long'
+      });
+    } catch (_) { return dataBR(iso); }
+  }
+
+  function linhasPendentes(markdown) {
+    return String(markdown || '').split(/\r?\n/).map(function (linha) {
+      var m = linha.match(/^\s*-\s*\[\s\]\s*(.+?)\s*$/);
+      return m ? m[1].trim() : '';
+    }).filter(Boolean);
+  }
+
+  function atualizarSecao(markdown, titulo, conteudo) {
+    var src = String(markdown || '').trim();
+    var bloco = '## ' + titulo + '\n' + String(conteudo || '').trim();
+    var re = new RegExp('(^|\\n)## ' + titulo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\n[\\s\\S]*?(?=\\n## |$)');
+    if (re.test(src)) return src.replace(re, function (match, prefix) { return (prefix || '') + bloco; }).trim();
+    return (src ? src + '\n\n' : '') + bloco;
+  }
+
+  function vaultVazio() {
+    return {
+      inbox: [],
+      diario: [],
+      contexto: '',
+      pendencias: '',
+      ignore: 'financeiro/\npessoal/\n*.key\n.env\n.env.*\n',
+      lastBriefing: '',
+      updatedAt: 0
+    };
+  }
+
+  function normalizarVault(v) {
+    var base = vaultVazio();
+    v = Object.assign(base, v || {});
+    v.inbox = Array.isArray(v.inbox) ? v.inbox : [];
+    v.diario = Array.isArray(v.diario) ? v.diario : [];
+    v.contexto = String(v.contexto || '');
+    v.pendencias = String(v.pendencias || '');
+    v.ignore = String(v.ignore || base.ignore);
+    return v;
+  }
+
+  function contextoInicial(user, profile, persona) {
+    var L = [];
+    if (user && user.name) L.push('# Quem eu sou\n' + user.name);
+    if (profile && profile.apelido) L.push('## Como me chamar\n' + profile.apelido);
+    if (profile && profile.bio) L.push('## Contexto\n' + profile.bio);
+    if (profile && profile.objetivos) L.push('## Objetivos\n' + profile.objetivos);
+    if (profile && profile.rotina) L.push('## Rotina\n' + profile.rotina);
+    if (profile && profile.travas && profile.travas.length) L.push('## O que me trava\n- ' + profile.travas.join('\n- '));
+    if (persona && persona.nome) L.push('## Assistente\n' + persona.nome + ' conversa comigo em passos pequenos.');
+    return L.join('\n\n').trim();
+  }
+
+  function pendenciasDeMemoria(uid_) {
+    if (!global.Memoria || !Memoria.abertas) return '';
+    var abertas = Memoria.abertas(uid_);
+    if (!abertas.length) return '';
+    return abertas.map(function (p) {
+      return '- [ ] ' + p.texto + (p.prazo ? ' @' + p.prazo : '') +
+        (p.prioridade === 'alta' ? ' !alta' : '');
+    }).join('\n');
+  }
+
+  function escolherPrioridades(uid_, v) {
+    var pend = [];
+    if (global.Memoria && Memoria.abertas) {
+      pend = Memoria.abertas(uid_).slice().sort(function (a, b) {
+        var pa = a.prioridade === 'alta' ? 0 : 1;
+        var pb = b.prioridade === 'alta' ? 0 : 1;
+        var da = a.prazo ? new Date(a.prazo + 'T12:00:00').getTime() : Infinity;
+        var db = b.prazo ? new Date(b.prazo + 'T12:00:00').getTime() : Infinity;
+        return pa - pb || da - db || a.criadoEm - b.criadoEm;
+      }).map(function (p) { return p.texto; });
+    }
+    var recentes = (v.inbox || []).slice().sort(function (a, b) {
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    }).map(function (n) { return n.texto; });
+    var pool = pend.concat(recentes);
+    var out = [];
+    pool.forEach(function (item) {
+      var t = String(item || '').trim();
+      if (!t) return;
+      if (out.some(function (x) { return x.toLowerCase() === t.toLowerCase(); })) return;
+      out.push(t);
+    });
+    if (!out.length) out.push('Escolher a menor acao util de hoje');
+    return out.slice(0, 3).map(function (p) {
+      var limpo = p.replace(/^[\s\-]+/, '').trim();
+      return /^[A-Za-zÀ-ÿ]/.test(limpo) ? limpo.charAt(0).toUpperCase() + limpo.slice(1) : limpo;
+    });
+  }
+
+  var Vault = {
+    hoje: function () { return dataISO(0); },
+    ontem: function () { return dataISO(-1); },
+    dataBR: dataBR,
+
+    get: function (uid_) { return normalizarVault(read(K.vault(uid_), null)); },
+    salvar: function (uid_, vault) {
+      var next = normalizarVault(vault);
+      next.updatedAt = Date.now();
+      write(K.vault(uid_), next);
+      return next;
+    },
+    ensure: function (uid_, user, profile, persona) {
+      var v = Vault.get(uid_);
+      var mudou = false;
+      if (!v.contexto.trim()) {
+        v.contexto = contextoInicial(user, profile, persona);
+        mudou = true;
+      }
+      if (!v.pendencias.trim()) {
+        v.pendencias = pendenciasDeMemoria(uid_);
+        mudou = true;
+      }
+      return mudou ? Vault.salvar(uid_, v) : v;
+    },
+    salvarArquivos: function (uid_, patch) {
+      var v = Vault.get(uid_);
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'contexto')) v.contexto = String(patch.contexto || '');
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'pendencias')) v.pendencias = String(patch.pendencias || '');
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'ignore')) v.ignore = String(patch.ignore || '');
+      return Vault.salvar(uid_, v);
+    },
+    addInbox: function (uid_, texto, fonte) {
+      texto = String(texto || '').trim();
+      if (!texto) return null;
+      var v = Vault.get(uid_);
+      var item = { id: uid(), texto: texto, fonte: fonte || 'manual', createdAt: Date.now() };
+      v.inbox.unshift(item);
+      if (v.inbox.length > 120) v.inbox = v.inbox.slice(0, 120);
+      Vault.salvar(uid_, v);
+      return item;
+    },
+    diarioDe: function (uid_, iso) {
+      return Vault.get(uid_).diario.filter(function (d) { return d.data === iso; })[0] || null;
+    },
+    upsertDiario: function (uid_, iso, markdown) {
+      var v = Vault.get(uid_);
+      var achou = null;
+      v.diario.forEach(function (d) { if (d.data === iso) achou = d; });
+      if (achou) {
+        achou.markdown = String(markdown || '');
+        achou.updatedAt = Date.now();
+      } else {
+        v.diario.push({ id: uid(), data: iso, markdown: String(markdown || ''), createdAt: Date.now(), updatedAt: Date.now() });
+      }
+      v.diario.sort(function (a, b) { return b.data.localeCompare(a.data); });
+      if (v.diario.length > 180) v.diario = v.diario.slice(0, 180);
+      return Vault.salvar(uid_, v);
+    },
+    caixa: function (uid_) {
+      var v = Vault.get(uid_);
+      var agora = Date.now();
+      var recentes = v.inbox.filter(function (n) { return agora - (n.createdAt || 0) <= 24 * 60 * 60 * 1000; }).slice(0, 5);
+      var ontem = Vault.diarioDe(uid_, dataISO(-1));
+      var pendOntem = linhasPendentes(ontem && ontem.markdown).slice(0, 5);
+      var prioridades = escolherPrioridades(uid_, v);
+      var hoje = dataISO(0);
+      var nota = (Vault.diarioDe(uid_, hoje) || {}).markdown || '# Diario ' + dataBR(hoje) + '\n' + tituloDia(hoje);
+      nota = atualizarSecao(nota, 'O que caiu',
+        recentes.length ? recentes.map(function (n) { return '- ' + n.texto; }).join('\n') : 'inbox limpa');
+      nota = atualizarSecao(nota, 'Onde eu parei',
+        pendOntem.length ? pendOntem.map(function (p) { return '- [ ] ' + p; }).join('\n') : 'sem pendencia registrada ontem');
+      nota = atualizarSecao(nota, 'Missao do dia',
+        prioridades.map(function (p) { return '- [ ] ' + p; }).join('\n'));
+      Vault.upsertDiario(uid_, hoje, nota);
+      v = Vault.get(uid_);
+      v.lastBriefing = hoje;
+      Vault.salvar(uid_, v);
+      return { markdown: nota, inbox: recentes, pendentes: pendOntem, prioridades: prioridades };
+    },
+    fechamento: function (uid_, resumo) {
+      var hoje = dataISO(0);
+      var nota = (Vault.diarioDe(uid_, hoje) || {}).markdown || '# Diario ' + dataBR(hoje) + '\n' + tituloDia(hoje);
+      var texto = String(resumo || '').trim();
+      var concluidas = [];
+      if (global.Memoria && Memoria.tudo) {
+        concluidas = Memoria.tudo(uid_).pendencias.filter(function (p) {
+          return p.feito && p.concluidoEm && new Date(p.concluidoEm).toDateString() === new Date().toDateString();
+        }).map(function (p) { return p.texto; });
+      }
+      var bloco = [
+        texto || 'Fechamento rapido: registrar o que aconteceu e preparar a proxima manha.',
+        '',
+        '### Vitorias',
+        concluidas.length ? concluidas.map(function (p) { return '- [x] ' + p; }).join('\n') : '- nada marcado ainda',
+        '',
+        '### Pendencias abertas',
+        pendenciasDeMemoria(uid_) || '- nenhuma pendencia aberta'
+      ].join('\n');
+      nota = atualizarSecao(nota, 'Fechamento', bloco);
+      Vault.upsertDiario(uid_, hoje, nota);
+      var v = Vault.get(uid_);
+      v.pendencias = pendenciasDeMemoria(uid_) || v.pendencias;
+      Vault.salvar(uid_, v);
+      if (global.Memoria && texto) Memoria.anotarDia(uid_, texto, hoje);
+      return { markdown: nota };
+    },
+    resumoParaPrompt: function (uid_) {
+      var v = Vault.get(uid_);
+      var L = [];
+      if (v.contexto.trim()) L.push('## contexto.md\n' + v.contexto.trim().slice(0, 1800));
+      if (v.pendencias.trim()) L.push('## pendencias.md\n' + v.pendencias.trim().slice(0, 1200));
+      var hoje = Vault.diarioDe(uid_, dataISO(0));
+      if (hoje && hoje.markdown) L.push('## Diario/' + dataBR(hoje.data) + '.md\n' + hoje.markdown.slice(0, 1600));
+      if (v.inbox.length) {
+        L.push('## 00-Inbox recente\n' + v.inbox.slice(0, 8).map(function (n) {
+          return '- ' + n.texto;
+        }).join('\n'));
+      }
+      return L.join('\n\n');
+    },
+    exportar: function (uid_) {
+      var v = Vault.get(uid_);
+      var L = [
+        '# JarvisOS Vault',
+        '',
+        '## .claudeignore',
+        '```',
+        v.ignore.trim(),
+        '```',
+        '',
+        '## contexto.md',
+        v.contexto || '_vazio_',
+        '',
+        '## pendencias.md',
+        v.pendencias || '_vazio_',
+        '',
+        '## 00-Inbox'
+      ];
+      (v.inbox || []).forEach(function (n) {
+        L.push('- ' + new Date(n.createdAt || Date.now()).toLocaleString('pt-BR') + ': ' + n.texto);
+      });
+      L.push('', '## Diario');
+      (v.diario || []).forEach(function (d) {
+        L.push('', '### Diario/' + dataBR(d.data) + '.md', d.markdown || '');
+      });
+      return L.join('\n');
+    },
+    limpar: function (uid_) { remove(K.vault(uid_)); }
   };
 
   /* ============================================================
@@ -826,7 +1091,7 @@
   global.Store = {
     keys: K, read: read, write: write, remove: remove, uid: uid,
     Crypto: Crypto, Users: Users, Sync: Sync, Config: Config,
-    ApiKey: ApiKey, Convs: Convs, Usage: Usage, ApiAlert: ApiAlert,
+    ApiKey: ApiKey, Convs: Convs, Vault: Vault, Usage: Usage, ApiAlert: ApiAlert,
     Profile: Profile, Persona: PersonaStore, Progress: Progress, Account: Account,
     DEFAULT_CONFIG: DEFAULT_CONFIG
   };

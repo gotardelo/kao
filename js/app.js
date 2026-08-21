@@ -33,7 +33,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-  var APP_VERSION = '2026.08.21.23';
+  var APP_VERSION = '2026.08.21.24';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -283,6 +283,7 @@
     }
     State.perfil = Store.Profile.get(user.id);
     State.persona = Store.Persona.get(user.id);
+    if (Store.Vault) Store.Vault.ensure(user.id, user, State.perfil, State.persona);
     Auth.touch();
 
     $('#view-auth').classList.add('hidden');
@@ -302,6 +303,7 @@
     renderProfile();
     renderPersona();
     renderVida();
+    renderJarvisOS();
     renderConvList();
     renderDashboard();
     atualizarAvisoDeLimiteApi();
@@ -352,8 +354,10 @@
       aoConcluir: function (perfil, persona) {
         State.perfil = Store.Profile.get(State.user.id);
         State.persona = Store.Persona.get(State.user.id);
+        if (Store.Vault) Store.Vault.ensure(State.user.id, State.user, State.perfil, State.persona);
         renderProfile();
         renderPersona();
+        renderJarvisOS();
         renderDashboard();
         renderMessages();
         atualizarMic();
@@ -480,6 +484,13 @@
 
       var rit = e.target.closest('[data-ritual]');
       if (rit) { dispararRitual(rit.dataset.ritual); return; }
+
+      var jarvis = e.target.closest('[data-jarvis-skill]');
+      if (jarvis) { executarSkillJarvis(jarvis.dataset.jarvisSkill); return; }
+
+      if (e.target.closest('#btn-vault-inbox')) { adicionarInboxJarvis(); return; }
+      if (e.target.closest('#btn-vault-save')) { salvarVaultJarvis(); return; }
+      if (e.target.closest('#btn-vault-export')) { exportarVaultJarvis(); return; }
 
       var sk = e.target.closest('[data-skin]');
       if (sk) {
@@ -619,7 +630,7 @@
     }, { passive: true });
   }
 
-  var TITLES = { dashboard: 'Painel', chat: 'Conversar', vida: 'Minha vida', persona: 'Meu TDAHzeiro', settings: 'Chave & Modelo', profile: 'Meu perfil' };
+  var TITLES = { dashboard: 'Painel', chat: 'Conversar', jarvis: 'JarvisOS', vida: 'Minha vida', persona: 'Meu TDAHzeiro', settings: 'Chave & Modelo', profile: 'Meu perfil' };
 
   function setNav(page) {
     State.page = page;
@@ -637,6 +648,7 @@
     app.classList.add('page-shift');
     if (page === 'dashboard') renderDashboard();
     if (page === 'vida') renderVida();
+    if (page === 'jarvis') renderJarvisOS();
     if (page === 'persona') renderPersona();
     if (page === 'profile') renderProfile();
     if (page === 'chat') { scrollToEnd(true); setTimeout(function () { $('#input').focus(); }, 60); }
@@ -1047,7 +1059,7 @@
       if (Persona.Ditado.ativo()) { Persona.Ditado.parar(); return; }
 
       // Com a voz ao vivo ligada o microfone já está em uso pela sessão.
-      if (Voz.ativo()) {
+      if (Voz.ativo() || agenteNavegadorAtivo()) {
         toast('A voz ao vivo já está usando o microfone. Desligue ela para ditar.', 'bad');
         return;
       }
@@ -1494,6 +1506,11 @@
         'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa. ' +
         'Uma pausa curta pode ser pensamento: espere a pessoa concluir antes de responder e nunca trate uma frase incompleta como a vez dela terminada.'
       );
+      partes.push(
+        '# JarvisOS\n' +
+        '- Use registrar_no_vault para ideias soltas, decisoes, referencias e contexto que ainda nao viraram tarefa.\n' +
+        '- Quando a pessoa pedir caixa da manha, fechamento, JarvisOS ou resumo do dia, use executar_caixa ou fechar_dia.'
+      );
     }
 
     // 2. como usar as ferramentas
@@ -1510,6 +1527,14 @@
       );
     }
 
+    if (State.config.ferramentas !== false && !agenteNavegadorAtivo()) {
+      partes.push(
+        '# JarvisOS\n' +
+        '- Use registrar_no_vault para ideias soltas, decisoes, referencias e contexto que ainda nao viraram tarefa.\n' +
+        '- Quando a pessoa pedir caixa da manha, fechamento, JarvisOS ou resumo do dia, use executar_caixa ou fechar_dia.'
+      );
+    }
+
     var estavel = partes.join('\n\n');
 
     // --- daqui para baixo é volátil: fica FORA do cache ---
@@ -1517,6 +1542,9 @@
 
     var mem = Memoria.resumoParaPrompt(State.user.id);
     if (mem) vol.push('# Memória\n' + mem);
+
+    var vault = Store.Vault && Store.Vault.resumoParaPrompt(State.user.id);
+    if (vault) vol.push('# JarvisOS Vault\n' + vault);
 
     var retrato = Avatar.descrever(Avatar.ficha(State.user.id, State.perfil));
     vol.push('# O avatar dela\n' +
@@ -1730,8 +1758,157 @@
   /** Depois de uma ferramenta gravar algo, as telas precisam refletir. */
   function atualizarTudoDepoisDeFerramenta() {
     renderVida();
+    renderJarvisOS();
     renderDashboard();
     pintarAvatarTopo();
+  }
+
+  /* ============================================================
+     JARVISOS
+     ============================================================ */
+  function vaultJarvis() {
+    if (!State.user || !Store.Vault) return null;
+    return Store.Vault.ensure(State.user.id, State.user, State.perfil, State.persona);
+  }
+
+  function resumoCaixaJarvis(resultado) {
+    if (!resultado) return '';
+    return [
+      'Caixa da manha pronta em Diario/' + Store.Vault.dataBR(Store.Vault.hoje()) + '.md',
+      '',
+      'O que caiu:',
+      resultado.inbox.length ? resultado.inbox.map(function (n) { return '- ' + n.texto; }).join('\n') : '- inbox limpa',
+      '',
+      'Onde parei:',
+      resultado.pendentes.length ? resultado.pendentes.map(function (p) { return '- [ ] ' + p; }).join('\n') : '- sem pendencia registrada ontem',
+      '',
+      'Missao do dia:',
+      resultado.prioridades.map(function (p) { return '- [ ] ' + p; }).join('\n')
+    ].join('\n');
+  }
+
+  function setValorSeNaoEditando(id, valor) {
+    var el = $(id);
+    if (!el || document.activeElement === el) return;
+    el.value = valor || '';
+  }
+
+  function renderJarvisOS() {
+    if (!State.user || !Store.Vault) return;
+    var v = vaultJarvis();
+    var hoje = Store.Vault.diarioDe(State.user.id, Store.Vault.hoje());
+    var status = $('#jarvis-status');
+    if (!status) return;
+
+    status.innerHTML =
+      '<div class="jarvis-stat"><span>00-Inbox</span><b>' + nf(v.inbox.length) + '</b></div>' +
+      '<div class="jarvis-stat"><span>Diario</span><b>' + nf(v.diario.length) + '</b></div>' +
+      '<div class="jarvis-stat"><span>Caixa</span><b>' + (v.lastBriefing === Store.Vault.hoje() ? 'hoje' : 'pendente') + '</b></div>';
+
+    var out = $('#jarvis-output');
+    if (out && !out.dataset.manual) {
+      out.textContent = hoje && hoje.markdown
+        ? hoje.markdown
+        : 'Rode a Caixa da manha para criar Diario/' + Store.Vault.dataBR(Store.Vault.hoje()) + '.md';
+    }
+
+    setValorSeNaoEditando('#vault-contexto', v.contexto);
+    setValorSeNaoEditando('#vault-pendencias', v.pendencias);
+    setValorSeNaoEditando('#vault-ignore', v.ignore);
+
+    var inbox = $('#jarvis-inbox-list');
+    if (inbox) {
+      inbox.innerHTML = v.inbox.length ? v.inbox.slice(0, 10).map(function (n) {
+        return '<div class="vault-line"><small>' + MD.escape(when(n.createdAt || Date.now())) + '</small><p>' +
+          MD.escape(n.texto) + '</p></div>';
+      }).join('') : '<p class="empty-note">Inbox limpa.</p>';
+    }
+
+    var diario = $('#jarvis-diario-list');
+    if (diario) {
+      diario.innerHTML = v.diario.length ? v.diario.slice(0, 6).map(function (d) {
+        var linhas = String(d.markdown || '').split(/\r?\n/).filter(Boolean).slice(0, 4).join(' / ');
+        return '<div class="vault-line"><small>Diario/' + MD.escape(Store.Vault.dataBR(d.data)) + '.md</small><p>' +
+          MD.escape(linhas || 'sem texto') + '</p></div>';
+      }).join('') : '<p class="empty-note">Nenhum diario ainda.</p>';
+    }
+
+    Icons.render($('#page-jarvis'));
+  }
+
+  function salvarVaultJarvis() {
+    if (!State.user || !Store.Vault) return;
+    Store.Vault.salvarArquivos(State.user.id, {
+      contexto: ($('#vault-contexto') && $('#vault-contexto').value) || '',
+      pendencias: ($('#vault-pendencias') && $('#vault-pendencias').value) || '',
+      ignore: ($('#vault-ignore') && $('#vault-ignore').value) || ''
+    });
+    renderJarvisOS();
+    toast('Vault salvo e sincronizado.', 'ok');
+  }
+
+  function adicionarInboxJarvis() {
+    if (!State.user || !Store.Vault) return;
+    var input = $('#vault-inbox-text');
+    var texto = input ? input.value.trim() : '';
+    if (!texto) { toast('Escreva uma nota para o 00-Inbox.', 'bad'); return; }
+    Store.Vault.addInbox(State.user.id, texto, 'manual');
+    input.value = '';
+    renderJarvisOS();
+    reward(6, 'nota no JarvisOS');
+    toast('Entrou no 00-Inbox.', 'ok');
+  }
+
+  function exportarVaultJarvis() {
+    if (!State.user || !Store.Vault) return;
+    var blob = new Blob([Store.Vault.exportar(State.user.id)], { type: 'text/markdown;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'jarvisos-vault-' + Store.Vault.hoje() + '.md';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    toast('Vault exportado em markdown.', 'ok');
+  }
+
+  function mandarPromptJarvis(texto) {
+    if (!texto) return;
+    newConv(true);
+    setNav('chat');
+    sendMessage(texto);
+  }
+
+  function executarSkillJarvis(skill) {
+    if (!State.user || !Store.Vault) return;
+    if (skill === 'caixa') {
+      var r = Store.Vault.caixa(State.user.id);
+      var out = $('#jarvis-output');
+      if (out) out.textContent = resumoCaixaJarvis(r);
+      renderJarvisOS();
+      reward(15, 'caixa da manha');
+      toast('Caixa da manha gravada no Diario.', 'ok');
+      return;
+    }
+    if (skill === 'fechamento') {
+      var resumo = prompt('Fechamento rapido de hoje:');
+      var f = Store.Vault.fechamento(State.user.id, resumo || '');
+      var output = $('#jarvis-output');
+      if (output) output.textContent = f.markdown;
+      renderJarvisOS();
+      reward(15, 'fechamento');
+      toast('Fechamento gravado no Diario.', 'ok');
+      return;
+    }
+    if (skill === 'metricas') {
+      mandarPromptJarvis('Use meu JarvisOS Vault, memoria e historico para analisar minhas metricas pessoais. Traga padroes de energia, travas, voz, dinheiro e pendencias em no maximo 12 linhas, com 3 ajustes praticos.');
+      return;
+    }
+    if (skill === 'tendencias') {
+      mandarPromptJarvis('Use meu JarvisOS Vault como base e encontre tendencias nos meus ultimos registros: temas recorrentes, sinais de sobrecarga e oportunidades. Seja artistico, direto e util.');
+      return;
+    }
+    if (skill === 'plano') {
+      mandarPromptJarvis('Use meu JarvisOS Vault para montar um plano de uma pagina para hoje. Se a Caixa da manha ainda nao rodou, chame executar_caixa antes. Entregue so o mapa do dia e o primeiro passo.');
+    }
   }
 
   function renderVida() {
@@ -1824,7 +2001,7 @@
       if (!sup.ok) {
         btn.classList.add('erro');
         $('#agente-label').textContent = 'Voz indisponível';
-        $('#agente-sub').textContent = 'precisa de HTTPS';
+        $('#agente-sub').textContent = sup.motivo || 'voz indisponivel';
         btn.setAttribute('aria-pressed', 'false');
       } else if (estado === 'conectando') {
         btn.classList.add('conectando');
@@ -2353,6 +2530,15 @@
 
   function falarComElevenLabs(texto, session, aoTerminar) {
     var controller = new AbortController();
+    var timeout = setTimeout(function () {
+      if (session.ativo && session.falaAbort === controller) controller.abort();
+    }, 16000);
+    function limparTimeout() {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+    }
     session.falaAbort = controller;
     fetch('/api/speech/synthesize', {
       method: 'POST',
@@ -2361,7 +2547,7 @@
         apiKey: State.elevenLabsKey,
         text: Persona.Voice.limpar(texto),
         voiceId: State.config.elevenLabsVoiceId,
-        modelId: State.config.elevenLabsModel || 'eleven_turbo_v2_5',
+        modelId: State.config.elevenLabsModel || 'eleven_multilingual_v2',
         voiceSettings: parametrosElevenLabs()
       }),
       signal: controller.signal
@@ -2375,13 +2561,18 @@
       });
       return tocarFluxoDeAudio(res, session, controller);
     }).then(function (saiuAudio) {
+      limparTimeout();
       if (!session.ativo || session.falaAbort !== controller) return;
       session.falaAbort = null;
       limparAvisoDeLimiteApi('elevenlabs');
       aoTerminar(saiuAudio);
     }).catch(function (erro) {
-      if (!session.ativo || (erro && erro.name === 'AbortError')) return;
-      toast((erro && erro.message) || 'A voz natural nao respondeu.', 'bad');
+      limparTimeout();
+      if (!session.ativo) return;
+      if (erro && erro.name === 'AbortError' && session.falaAbort !== controller) return;
+      toast(erro && erro.name === 'AbortError'
+        ? 'A voz natural demorou demais. Voltei para a escuta.'
+        : ((erro && erro.message) || 'A voz natural nao respondeu.'), 'bad');
       if (session.falaAbort === controller) session.falaAbort = null;
       aoTerminar(false);
     });
@@ -2649,6 +2840,7 @@
   function liberarTranscricaoRealtime(realtime) {
     if (!realtime) return;
     realtime.parando = true;
+    if (realtime.abrirTimer) clearTimeout(realtime.abrirTimer);
     if (realtime.finalTimer) clearTimeout(realtime.finalTimer);
     if (realtime.processador) {
       try { realtime.processador.disconnect(); } catch (_) {}
@@ -2728,6 +2920,10 @@
     if (!session || !session.ativo || session.mudo || session.ocupado || session.realtimeIndisponivel) return;
     session.realtimeIndisponivel = true;
     session.realtimeAbrindo = false;
+    if (erro && !session.avisoTranscricao) {
+      session.avisoTranscricao = true;
+      mostrarDiagnostico(((erro && erro.message) || 'A transcricao em tempo real falhou.') + ' Usando modo compativel.');
+    }
     pararTranscricaoRealtime(session);
     iniciarEscutaNeuralEmLote();
   }
@@ -2768,19 +2964,25 @@
         var contexto = new (window.AudioContext || window.webkitAudioContext)();
         var realtime = {
           stream: stream, contexto: contexto, socket: null, fonte: null, processador: null,
-          silencio: null, parando: false, concluido: false, aberto: false, finalTimer: null,
+          silencio: null, parando: false, concluido: false, aberto: false, abrirTimer: null, finalTimer: null,
           trechosConfirmados: [], parcial: '', finalPendente: ''
         };
         session.realtime = realtime;
         session.realtimeAbrindo = false;
         var socket = new WebSocket(endpoint.toString());
         realtime.socket = socket;
+        realtime.abrirTimer = setTimeout(function () {
+          if (!realtime.aberto && !realtime.parando && session.realtime === realtime) {
+            usarTranscricaoEmLote(session, new Error('A transcricao em tempo real demorou para abrir.'));
+          }
+        }, 8500);
 
         socket.onopen = function () {
           if (!session.ativo || session.mudo || session.ocupado || session.realtime !== realtime) {
             liberarTranscricaoRealtime(realtime);
             return;
           }
+          if (realtime.abrirTimer) { clearTimeout(realtime.abrirTimer); realtime.abrirTimer = null; }
           realtime.aberto = true;
           realtime.fonte = contexto.createMediaStreamSource(stream);
           realtime.processador = contexto.createScriptProcessor(4096, 1, 1);
@@ -3473,12 +3675,16 @@
               'o que está fora do lugar, o que vence e o que eu deveria fazer.'
   };
 
+  RITUAIS.manha = 'Execute a skill executar_caixa do JarvisOS. Depois me entregue o resumo em no maximo 10 linhas e escolha a primeira acao de 5 minutos.';
+  RITUAIS.noite = 'Vamos fechar o dia. Pergunte uma coisa por vez se faltar contexto. Depois use fechar_dia para gravar no Diario e atualize minhas pendencias.';
+
   function dispararRitual(qual) {
     var texto = RITUAIS[qual];
     if (!texto) return;
     if (!State.apiKey) { toast('Configure sua chave da API primeiro.', 'bad'); setNav('settings'); return; }
 
     // Se ele já está na linha, o ritual vira fala em vez de abrir outra conversa.
+    if (agenteNavegadorAtivo()) { setNav('chat'); enviarFalaDoNavegador(texto); return; }
     if (Voz.estado() === 'ligado') { setNav('chat'); Voz.dizer(texto); return; }
 
     newConv(true);
@@ -3570,7 +3776,7 @@
     if ($('#cfg-voz-realtime')) $('#cfg-voz-realtime').value = c.vozRealtime || 'marin';
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
     aplicarVozElevenLabs(c.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE);
-    if ($('#cfg-elevenlabs-model')) $('#cfg-elevenlabs-model').value = c.elevenLabsModel || 'eleven_turbo_v2_5';
+    if ($('#cfg-elevenlabs-model')) $('#cfg-elevenlabs-model').value = c.elevenLabsModel || 'eleven_multilingual_v2';
     renderModelagemElevenLabs();
     if ($('#cfg-ambiente-volume')) $('#cfg-ambiente-volume').value = String(volumeAmbiente());
     if ($('#cfg-ambiente-volume-label')) $('#cfg-ambiente-volume-label').textContent = volumeAmbiente() + '%';
@@ -3873,7 +4079,7 @@
         apiKey: key,
         text: 'Oi. Agora estou usando uma voz natural para conversar com voce em tempo real.',
         voiceId: voiceId,
-        modelId: ($('#cfg-elevenlabs-model') && $('#cfg-elevenlabs-model').value) || 'eleven_turbo_v2_5',
+        modelId: ($('#cfg-elevenlabs-model') && $('#cfg-elevenlabs-model').value) || 'eleven_multilingual_v2',
         voiceSettings: parametrosElevenLabs()
       })
     }).then(function (res) {
@@ -4034,7 +4240,7 @@
         var modelagem = modelagemElevenLabsAtual();
         State.config = Store.Config.set(State.user.id, {
           elevenLabsVoiceId: voiceId || DEFAULT_ELEVENLABS_VOICE,
-          elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5',
+          elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_multilingual_v2',
           elevenLabsStability: modelagem.stability,
           elevenLabsSimilarity: modelagem.similarity,
           elevenLabsStyle: modelagem.style,
@@ -4132,7 +4338,7 @@
         vozRealtime: $('#cfg-voz-realtime').value || 'marin',
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',
         elevenLabsVoiceId: vozElevenLabsAtual() || DEFAULT_ELEVENLABS_VOICE,
-        elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5',
+        elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_multilingual_v2',
         elevenLabsStability: modelagem.stability,
         elevenLabsSimilarity: modelagem.similarity,
         elevenLabsStyle: modelagem.style,

@@ -1,6 +1,6 @@
 const ELEVENLABS_TTS = 'https://api.elevenlabs.io/v1/text-to-speech';
 const DEFAULT_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-const DEFAULT_MODEL = 'eleven_turbo_v2_5';
+const DEFAULT_MODEL = 'eleven_multilingual_v2';
 const SUPPORTED_MODELS = new Set([
   'eleven_turbo_v2_5',
   'eleven_multilingual_v2',

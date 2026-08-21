@@ -967,7 +967,7 @@ h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
 .mission-choice.is-primary:hover{background:#ecff98}
 .mission-enter{background:rgba(9,10,8,.58);border-color:rgba(247,247,238,.24)}
 
-.experience-reel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.experience-reel{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .experience-card{
   position:relative;isolation:isolate;min-height:248px;padding:18px;overflow:hidden;
   display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:11px;
@@ -982,6 +982,13 @@ h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
 .experience-focus::after{background-image:url('../assets/portal-missions.png');background-position:77% 42%}
 .experience-money::after{background-image:url('../assets/portal-missions.png');background-position:96% 80%;filter:hue-rotate(54deg) saturate(.72) brightness(.76)}
 .experience-voice{background:#101815}
+.experience-jarvis{background:#18131d}
+.experience-jarvis::after{
+  background:
+    linear-gradient(135deg,rgba(246,72,164,.22),transparent 34%),
+    repeating-linear-gradient(90deg,rgba(247,247,238,.08) 0 1px,transparent 1px 18px),
+    repeating-linear-gradient(0deg,rgba(247,247,238,.06) 0 1px,transparent 1px 18px);
+}
 .experience-meta{display:flex;justify-content:space-between;width:100%;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;color:#c8c8bd}
 .experience-meta b{color:var(--accent)}
 .experience-copy{display:flex;flex-direction:column;gap:5px;max-width:28ch}
@@ -995,8 +1002,57 @@ h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
 .experience-focus .experience-visual{opacity:.55}.experience-focus .experience-visual i{background:var(--accent-2)}
 .voice-wave{left:20px;right:auto;gap:6px}.voice-wave i{width:5px;background:var(--accent-2)}.voice-wave i:nth-child(6){height:46px;animation-delay:.6s}.voice-wave i:nth-child(7){height:25px;animation-delay:.72s}
 .money-pulse{gap:10px}.money-pulse i{width:38px;height:38px;border-radius:50%;background:transparent;border:1px solid var(--warn);animation:moneyPulse 2.2s ease-out infinite}.money-pulse i:nth-child(2){animation-delay:.45s}.money-pulse i:nth-child(3){animation-delay:.9s}
+.jarvis-signal{gap:8px}.jarvis-signal i{width:28px;height:28px;border-radius:6px;background:rgba(246,72,164,.16);border:1px solid rgba(246,72,164,.55);animation:jarvisBlink 1.8s steps(2,end) infinite}.jarvis-signal i:nth-child(2){animation-delay:.25s}.jarvis-signal i:nth-child(3){animation-delay:.5s}.jarvis-signal i:nth-child(4){animation-delay:.75s}
 @keyframes signalBeat{50%{transform:scaleY(.46);opacity:.42}}
 @keyframes moneyPulse{50%{transform:scale(.76);opacity:.42}}
+@keyframes jarvisBlink{50%{transform:translateY(10px);border-color:rgba(124,240,209,.7);background:rgba(124,240,209,.2)}}
+
+.jarvis-hero{
+  position:relative;overflow:hidden;min-height:270px;padding:26px;display:flex;align-items:center;gap:26px;
+  border:1px solid rgba(124,240,209,.22);border-radius:8px;background:
+    linear-gradient(120deg,rgba(16,16,15,.96),rgba(21,16,26,.92)),
+    repeating-linear-gradient(90deg,rgba(247,247,238,.055) 0 1px,transparent 1px 26px);
+}
+.jarvis-hero::after{
+  content:'';position:absolute;inset:auto -8% -42% 18%;height:70%;
+  background:linear-gradient(88deg,rgba(217,255,82,.16),rgba(124,240,209,.2),rgba(246,72,164,.14));
+  transform:skewY(-11deg);opacity:.72;pointer-events:none;
+}
+.jarvis-face{
+  position:relative;z-index:1;width:132px;height:132px;flex:0 0 132px;border-radius:22px;
+  display:grid;place-items:center;background:#10100f;border:1px solid rgba(247,247,238,.18);
+  box-shadow:inset 0 0 0 1px rgba(217,255,82,.08),0 24px 58px rgba(0,0,0,.45);
+}
+.jarvis-face span{
+  width:74px;height:74px;border-radius:18px;background:linear-gradient(145deg,#d9ff52,#7cf0d1 46%,#f648a4);
+  filter:saturate(1.15);animation:jarvisFace 3.4s ease-in-out infinite;
+}
+.jarvis-face i{position:absolute;display:block;width:8px;height:8px;border-radius:50%;background:#d9ff52;box-shadow:0 0 18px rgba(217,255,82,.6);animation:jarvisNode 2.8s ease-in-out infinite}
+.jarvis-face i:nth-child(2){top:18px;left:20px}.jarvis-face i:nth-child(3){right:18px;top:54px;animation-delay:.34s}.jarvis-face i:nth-child(4){left:54px;bottom:17px;animation-delay:.68s}
+.jarvis-copy{position:relative;z-index:1;display:flex;flex-direction:column;gap:14px;max-width:720px}
+.jarvis-copy h3{font-size:38px;line-height:1.02;letter-spacing:0}
+.jarvis-copy .muted{max-width:58ch;color:#d7d7ce}
+.jarvis-actions{display:flex;flex-wrap:wrap;gap:8px}
+.jarvis-rack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.jarvis-stat{padding:16px 18px;border:1px solid var(--border-soft);border-radius:8px;background:#151513}
+.jarvis-stat span{display:block;font-family:var(--mono);font-size:11px;font-weight:700;text-transform:uppercase;color:#aaa99f}
+.jarvis-stat b{display:block;margin-top:4px;font-size:24px;color:var(--text)}
+.jarvis-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:14px;align-items:start}
+.jarvis-console{min-height:440px}
+.jarvis-console pre{
+  min-height:336px;max-height:58vh;overflow:auto;white-space:pre-wrap;
+  padding:16px;border:1px solid rgba(247,247,238,.12);border-radius:7px;background:#080807;
+  color:#f1f1e7;font-family:var(--mono);font-size:13px;line-height:1.62;
+}
+.jarvis-inbox,.jarvis-history{min-height:280px}
+.jarvis-files{grid-column:1 / -1}
+.jarvis-files .field textarea{min-height:128px;font-family:var(--mono);font-size:13px}
+.vault-list{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.vault-line{padding:12px;border:1px solid rgba(247,247,238,.09);border-radius:7px;background:#11110f}
+.vault-line small{display:block;margin-bottom:3px;font-family:var(--mono);font-size:10px;color:#8f8e86;text-transform:uppercase}
+.vault-line p{font-size:14px;line-height:1.42;color:#e7e7dc}
+@keyframes jarvisFace{50%{transform:scale(.9) rotate(4deg);border-radius:50%}}
+@keyframes jarvisNode{50%{transform:translateY(-8px);background:#7cf0d1;box-shadow:0 0 18px rgba(124,240,209,.7)}}
 
 .progress-panel{padding:22px;background:#11110f;border:1px solid var(--border-soft);border-radius:8px}
 .xp-tile{background:#20201d;border-radius:6px;padding:14px}
@@ -1031,10 +1087,16 @@ h1,h2,h3,h4,.btn,.nav-item,.eyebrow{letter-spacing:0}
   .mission-hero h3{font-size:36px;max-width:10ch}
   .experience-reel{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,78vw);grid-template-columns:none;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x mandatory}
   .experience-card{min-height:226px;scroll-snap-align:start}
+  .jarvis-hero{min-height:360px;align-items:flex-start;flex-direction:column;padding:20px}
+  .jarvis-face{width:104px;height:104px;flex-basis:104px}.jarvis-face span{width:58px;height:58px}
+  .jarvis-copy h3{font-size:31px}
+  .jarvis-rack{grid-template-columns:1fr}
+  .jarvis-grid{grid-template-columns:1fr}
+  .jarvis-console{min-height:360px}.jarvis-console pre{min-height:260px;max-height:48vh}
   .chat-empty{padding-top:58px}.chat-empty h3{font-size:32px}
   .composer-wrap{padding-left:14px;padding-right:14px}
 }
 
 @media (prefers-reduced-motion:reduce){
-  .experience-card,.experience-card::after,.experience-visual i,.money-pulse i{animation:none !important;transition:none !important}
+  .experience-card,.experience-card::after,.experience-visual i,.money-pulse i,.jarvis-face span,.jarvis-face i{animation:none !important;transition:none !important}
 }
