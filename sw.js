@@ -9,7 +9,7 @@
    navegador com restrição), o worker instala do mesmo jeito e o app
    segue funcionando online.
    ============================================================ */
-const CACHE = 'tdahzei-v19';
+const CACHE = 'tdahzei-v20';
 const SHELL = [
   './',
   './index.html',
@@ -53,6 +53,10 @@ async function preencherCache() {
 
 self.addEventListener('install', (event) => {
   event.waitUntil(preencherCache().then(() => self.skipWaiting()));
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

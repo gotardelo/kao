@@ -33,6 +33,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
+  var APP_VERSION = '2026.08.21.23';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -232,9 +233,36 @@
       if (sp) sp.classList.add('gone');
     }, 380);
 
-    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-      navigator.serviceWorker.register('sw.js').catch(function () { /* offline é opcional */ });
+    registrarServiceWorker();
+  }
+
+  function registrarServiceWorker() {
+    if (!('serviceWorker' in navigator) || location.protocol.indexOf('http') !== 0) return;
+    var tinhaControle = !!navigator.serviceWorker.controller;
+    var recarregando = false;
+
+    function ativarAgora(worker) {
+      if (!worker) return;
+      try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
     }
+
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!tinhaControle || recarregando) return;
+      recarregando = true;
+      location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js?v=' + encodeURIComponent(APP_VERSION)).then(function (reg) {
+      if (reg.waiting) ativarAgora(reg.waiting);
+      reg.addEventListener('updatefound', function () {
+        var worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', function () {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) ativarAgora(worker);
+        });
+      });
+      reg.update().catch(function () {});
+    }).catch(function () { /* offline e cache sao opcionais */ });
   }
 
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
@@ -2037,16 +2065,44 @@
   }
 
   function suporteAgenteNavegador() {
-    if (!usarVozNatural() && !Persona.Ditado.disponivel()) {
-      return { ok: false, motivo: 'Nao encontrei uma forma de ouvir neste navegador. Use Chrome ou Edge atualizado em HTTPS.' };
-    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return { ok: false, motivo: 'Este navegador nao permite acesso seguro ao microfone.' };
     }
-    if (!usarVozNatural() && !Persona.Voice.disponivel()) {
+    if (usarVozNatural()) {
+      if (!(window.AudioContext || window.webkitAudioContext)) {
+        return { ok: false, motivo: 'Este navegador nao permite processar audio ao vivo. Atualize o navegador e tente de novo.' };
+      }
+      return { ok: true, motivo: '' };
+    }
+    if (!Persona.Ditado.disponivel()) {
+      return { ok: false, motivo: 'Este navegador nao tem ditado nativo. Salve a chave VoiceLab / ElevenLabs para usar voz natural aqui.' };
+    }
+    if (!Persona.Voice.disponivel()) {
       return { ok: false, motivo: 'Este navegador nao tem leitura de voz.' };
     }
     return { ok: true, motivo: '' };
+  }
+
+  function desbloquearAudioDoAgente() {
+    if (State.audioDesbloqueado) return;
+    State.audioDesbloqueado = true;
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        var contexto = new AudioCtx();
+        contexto.resume().then(function () {
+          setTimeout(function () { contexto.close().catch(function () {}); }, 500);
+        }).catch(function () {});
+      }
+    } catch (_) {}
+    try {
+      var audio = new Audio('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      audio.volume = 0;
+      audio.play().then(function () {
+        audio.pause();
+        audio.src = '';
+      }).catch(function () {});
+    } catch (_) {}
   }
 
   /** Pequena guarda contra o fim do audio do agente voltar pelo microfone. */
@@ -2444,6 +2500,10 @@
   function liberarCaptura(captura) {
     if (!captura) return;
     if (captura.quadro) cancelAnimationFrame(captura.quadro);
+    try { if (captura.processador) captura.processador.onaudioprocess = null; } catch (_) {}
+    try { if (captura.processador) captura.processador.disconnect(); } catch (_) {}
+    try { if (captura.silencio) captura.silencio.disconnect(); } catch (_) {}
+    try { if (captura.fonte) captura.fonte.disconnect(); } catch (_) {}
     if (captura.contexto) captura.contexto.close().catch(function () {});
     if (captura.stream) captura.stream.getTracks().forEach(function (track) { track.stop(); });
   }
@@ -2457,13 +2517,26 @@
     if (captura.recorder && captura.recorder.state !== 'inactive') {
       try { captura.recorder.stop(); return; } catch (_) {}
     }
+    if (captura.finalizar) {
+      captura.finalizar();
+      return;
+    }
     liberarCaptura(captura);
     if (session.captura === captura) session.captura = null;
   }
 
+  function nomeArquivoAudio(blob) {
+    var tipo = String((blob && blob.type) || '').toLowerCase();
+    if (tipo.indexOf('wav') > -1) return 'fala.wav';
+    if (tipo.indexOf('mp4') > -1 || tipo.indexOf('m4a') > -1) return 'fala.m4a';
+    if (tipo.indexOf('ogg') > -1) return 'fala.ogg';
+    if (tipo.indexOf('mpeg') > -1 || tipo.indexOf('mp3') > -1) return 'fala.mp3';
+    return 'fala.webm';
+  }
+
   function transcreverAudio(blob) {
     var dados = new FormData();
-    dados.append('file', blob, 'fala.webm');
+    dados.append('file', blob, nomeArquivoAudio(blob));
     dados.append('apiKey', State.elevenLabsKey);
     return fetch('/api/speech/transcribe', { method: 'POST', body: dados }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
@@ -2520,6 +2593,57 @@
       texto += String.fromCharCode.apply(null, bytes.subarray(n, n + 0x8000));
     }
     return btoa(texto);
+  }
+
+  function pcm16DeAmostras(amostras, sampleRate) {
+    var taxaAlvo = 16000;
+    var razao = sampleRate / taxaAlvo;
+    var tamanho = Math.max(1, Math.round(amostras.length / razao));
+    var pcm = new Int16Array(tamanho);
+    for (var i = 0; i < tamanho; i++) {
+      var inicio = Math.floor(i * razao);
+      var fim = Math.min(amostras.length, Math.floor((i + 1) * razao));
+      var soma = 0;
+      for (var j = inicio; j < fim; j++) soma += amostras[j];
+      var valor = soma / Math.max(1, fim - inicio);
+      valor = Math.max(-1, Math.min(1, valor));
+      pcm[i] = valor < 0 ? valor * 0x8000 : valor * 0x7fff;
+    }
+    return pcm;
+  }
+
+  function escreverAscii(view, offset, texto) {
+    for (var i = 0; i < texto.length; i++) view.setUint8(offset + i, texto.charCodeAt(i));
+  }
+
+  function wavDeAmostras(partes, sampleRate) {
+    var total = (partes || []).reduce(function (n, parte) { return n + parte.length; }, 0);
+    var amostras = new Float32Array(total);
+    var pos = 0;
+    (partes || []).forEach(function (parte) {
+      amostras.set(parte, pos);
+      pos += parte.length;
+    });
+    var taxa = 16000;
+    var pcm = pcm16DeAmostras(amostras, sampleRate || taxa);
+    var buffer = new ArrayBuffer(44 + pcm.length * 2);
+    var view = new DataView(buffer);
+    escreverAscii(view, 0, 'RIFF');
+    view.setUint32(4, 36 + pcm.length * 2, true);
+    escreverAscii(view, 8, 'WAVE');
+    escreverAscii(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, taxa, true);
+    view.setUint32(28, taxa * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    escreverAscii(view, 36, 'data');
+    view.setUint32(40, pcm.length * 2, true);
+    var offset = 44;
+    for (var i = 0; i < pcm.length; i++, offset += 2) view.setInt16(offset, pcm[i], true);
+    return new Blob([view], { type: 'audio/wav' });
   }
 
   function liberarTranscricaoRealtime(realtime) {
@@ -2746,35 +2870,54 @@
   function iniciarEscutaNeuralEmLote() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
+    if (!(window.AudioContext || window.webkitAudioContext)) {
+      var semAudio = 'Este navegador nao permite processar audio do microfone.';
+      mostrarDiagnostico(semAudio);
+      atualizarAgenteUI('off', semAudio);
+      toast(semAudio, 'bad');
+      session.ativo = false;
+      State.agente.ligado = false;
+      return;
+    }
     session.ouvindo = false;
     atualizarAgenteUI('conectando', 'abrindo microfone natural');
-    getUserMediaAgente().then(function (stream) {
+    getUserMediaAgente({ channelCount: 1 }).then(function (stream) {
       if (!session.ativo || session.mudo || session.ocupado) {
         stream.getTracks().forEach(function (track) { track.stop(); });
         return;
       }
-      session.ouvindo = true;
-      atualizarAgenteUI('ligado', 'ouvindo');
-      var tipos = ['audio/webm;codecs=opus', 'audio/webm'];
-      var tipo = tipos.filter(function (item) { return MediaRecorder.isTypeSupported(item); })[0];
-      var recorder = tipo ? new MediaRecorder(stream, { mimeType: tipo }) : new MediaRecorder(stream);
-      var contexto = new (window.AudioContext || window.webkitAudioContext)();
-      var fonte = contexto.createMediaStreamSource(stream);
-      var analisador = contexto.createAnalyser();
-      analisador.fftSize = 1024;
-      fonte.connect(analisador);
+      var contexto, fonte, analisador, processador, silencio;
+      try {
+        contexto = new (window.AudioContext || window.webkitAudioContext)();
+        if (!contexto.createScriptProcessor) throw new Error('Este navegador nao permite gravar audio em lote.');
+        fonte = contexto.createMediaStreamSource(stream);
+        analisador = contexto.createAnalyser();
+        analisador.fftSize = 1024;
+        processador = contexto.createScriptProcessor(4096, 1, 1);
+        silencio = contexto.createGain();
+        silencio.gain.value = 0;
+        fonte.connect(analisador);
+        fonte.connect(processador);
+        processador.connect(silencio);
+        silencio.connect(contexto.destination);
+      } catch (erroSetup) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        if (contexto) contexto.close().catch(function () {});
+        throw erroSetup;
+      }
+
       var voz = parametrosDeVoz();
       var captura = {
-        stream: stream, recorder: recorder, contexto: contexto, analisador: analisador,
-        partes: [], detectouFala: false, ultimoSom: Date.now(), inicio: Date.now(),
-        parando: false, enviar: false, quadro: 0, ruido: 0, amostrasRuido: 0,
-        limiar: voz.limiarMin, pico: 0, avisouSemSinal: false, voz: voz
+        stream: stream, contexto: contexto, fonte: fonte, processador: processador,
+        silencio: silencio, analisador: analisador, partes: [], detectouFala: false,
+        ultimoSom: Date.now(), inicio: Date.now(), parando: false, enviar: false,
+        finalizado: false, quadro: 0, ruido: 0, amostrasRuido: 0,
+        limiar: voz.limiarMin, pico: 0, avisouSemSinal: false, voz: voz,
+        sampleRate: contexto.sampleRate
       };
-      session.captura = captura;
-      recorder.ondataavailable = function (evento) {
-        if (evento.data && evento.data.size) captura.partes.push(evento.data);
-      };
-      recorder.onstop = function () {
+      captura.finalizar = function () {
+        if (captura.finalizado) return;
+        captura.finalizado = true;
         liberarCaptura(captura);
         if (session.captura === captura) session.captura = null;
         session.ouvindo = false;
@@ -2782,8 +2925,8 @@
           if (session.ativo && !session.mudo && !session.ocupado) setTimeout(iniciarEscutaDoNavegador, 250);
           return;
         }
-        var audio = new Blob(captura.partes, { type: recorder.mimeType || 'audio/webm' });
-        if (audio.size < 1200) {
+        var audio = wavDeAmostras(captura.partes, captura.sampleRate);
+        if (audio.size < 1200 || captura.partes.length < 2) {
           setTimeout(iniciarEscutaDoNavegador, 250);
           return;
         }
@@ -2809,8 +2952,15 @@
           toast(mensagem, 'bad');
         });
       };
-      recorder.start(200);
+
+      session.captura = captura;
+      processador.onaudioprocess = function (evento) {
+        if (captura.finalizado || captura.parando) return;
+        captura.partes.push(new Float32Array(evento.inputBuffer.getChannelData(0)));
+      };
       contexto.resume().catch(function () {});
+      session.ouvindo = true;
+      atualizarAgenteUI('ligado', 'ouvindo');
       var dados = new Uint8Array(analisador.fftSize);
       function monitorar() {
         if (!session.ativo || session.mudo || session.captura !== captura || captura.parando) return;
@@ -3199,7 +3349,7 @@
       if ($('#cfg-agente-auto')) $('#cfg-agente-auto').checked = true;
     }
     iniciarVigia();
-    conectarVoz(true);
+    conectarVoz(silencioso ? false : true);
     if (!silencioso) toast(nomeP() + ' está entrando na linha…');
   }
 
@@ -3222,7 +3372,10 @@
 
   function alternarAgente() {
     if (State.agente.ligado || Voz.ativo() || agenteNavegadorAtivo()) desligarAgente();
-    else ligarAgente();
+    else {
+      desbloquearAudioDoAgente();
+      ligarAgente();
+    }
   }
 
   /* ---------------- vigia: ociosidade, teto e relógio ---------------- */
