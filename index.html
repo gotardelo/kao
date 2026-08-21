@@ -159,7 +159,7 @@
       <h2 id="page-title">Painel</h2>
       <div class="focus-radar" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
       <div class="spacer"></div>
-      <button class="icon-btn ambient-btn" id="btn-ambiente" type="button" aria-pressed="false" aria-label="Ativar paisagem sonora" title="Ativar paisagem sonora">
+      <button class="icon-btn ambient-btn" id="btn-ambiente" type="button" aria-pressed="false" aria-label="Ativar paisagem sonora (nao abre microfone)" title="Paisagem sonora; nao abre microfone">
         <i data-ico="sound"></i>
       </button>
       <button class="agente-btn" id="btn-agente" type="button" aria-pressed="false" title="Ligar ou desligar a conversa por voz">
@@ -379,9 +379,16 @@
             <small class="hint">Opcional. O Claude continua sendo o cerebro; a ElevenLabs so transcreve sua fala e responde com uma voz natural.</small>
           </label>
           <label class="field">
-            <span>ID da voz natural</span>
+            <span>Voz natural da VoiceLab / ElevenLabs</span>
+            <select id="cfg-elevenlabs-voice-select">
+              <option value="">Valide a chave para carregar suas vozes</option>
+            </select>
+            <small class="hint">Escolha uma voz da sua biblioteca. Se ficar vazio, eu escolho a opcao mais provavel em portugues.</small>
+          </label>
+          <label class="field">
+            <span>ID manual da voz natural</span>
             <input type="text" id="cfg-elevenlabs-voice" list="elevenlabs-voices" placeholder="ID da voz na ElevenLabs" autocomplete="off" spellcheck="false">
-            <small class="hint">Use uma voz em portugues da sua biblioteca ElevenLabs. Sem isso, o app usa a voz padrao configurada.</small>
+            <small class="hint">Use apenas se quiser colar um voice_id especifico. O seletor acima sincroniza esse campo.</small>
           </label>
           <label class="field">
             <span>Qualidade da voz natural</span>
@@ -395,6 +402,7 @@
           <datalist id="elevenlabs-voices"></datalist>
           <div class="row-btns">
             <button class="btn btn-ghost" id="btn-save-elevenlabs-key" type="button"><i data-ico="check"></i> Salvar voz natural</button>
+            <button class="btn btn-ghost" id="btn-test-elevenlabs-voice" type="button"><i data-ico="sound"></i> Testar voz</button>
             <button class="btn btn-ghost" id="btn-clear-elevenlabs-key" type="button">Remover chave de voz</button>
           </div>
           <p class="test-result" id="elevenlabs-result"></p>
@@ -527,8 +535,8 @@
             <small class="hint" id="mic-device-hint">Se aparecer so "microfone", clique em Atualizar e libere o acesso.</small>
           </label>
           <label class="field">
-            <span>Sensibilidade do agente: <b id="cfg-voz-sensibilidade-label">86%</b></span>
-            <input type="range" id="cfg-voz-sensibilidade" min="40" max="100" step="1" value="86">
+            <span>Sensibilidade do agente: <b id="cfg-voz-sensibilidade-label">92%</b></span>
+            <input type="range" id="cfg-voz-sensibilidade" min="40" max="100" step="1" value="92">
             <small class="hint">Mais alto entende fala baixa e microfone distante; mais baixo ignora ruido do ambiente.</small>
           </label>
           <label class="check">

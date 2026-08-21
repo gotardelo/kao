@@ -32,6 +32,9 @@
     page: 'dashboard'
   };
 
+  var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
+  var ElevenLabsVoices = [];
+
   /** Nome do personagem, com fallback enquanto ele não existe. */
   function nomeP() { return (State.persona && State.persona.nome) || 'TDAHZEI'; }
   function apelido() {
@@ -281,10 +284,15 @@
       abrirCriador({ modo: 'onboarding' });
     }
 
-    // Carrega a chave e valida em segundo plano.
-    Store.ApiKey.load(user.id, State.config.provider).then(function (key) {
-      State.apiKey = key || '';
+    // Carrega as chaves antes de decidir se o agente entra com voz natural.
+    Promise.all([
+      Store.ApiKey.load(user.id, State.config.provider).catch(function () { return ''; }),
+      Store.ApiKey.load(user.id, 'elevenlabs').catch(function () { return ''; })
+    ]).then(function (keys) {
+      State.apiKey = keys[0] || '';
+      State.elevenLabsKey = keys[1] || '';
       renderKeyUI();
+      renderElevenLabsKeyUI();
       if (State.apiKey) checkKey(true);
       else {
         setKeyStatus('none');
@@ -292,12 +300,13 @@
           toast('Adicione sua chave da API em "Chave & Modelo" para começar.');
         }
       }
-      // O agente entra junto com você: é o ponto do app.
-      talvezLigarAgenteSozinho();
-    });
-    Store.ApiKey.load(user.id, 'elevenlabs').then(function (key) {
-      State.elevenLabsKey = key || '';
-      renderElevenLabsKeyUI();
+      var carregarVozes = State.elevenLabsKey
+        ? carregarVozesElevenLabs(State.elevenLabsKey, true).catch(function () { return []; })
+        : Promise.resolve([]);
+      carregarVozes.then(function () {
+        // O agente entra junto com você: é o ponto do app.
+        talvezLigarAgenteSozinho();
+      });
     });
     var last = Store.Convs.all(user.id)[0];
     if (last) openConv(last.id, true); else newConv(true);
@@ -521,8 +530,9 @@
     if (btn) {
       btn.classList.toggle('is-active', ativo);
       btn.setAttribute('aria-pressed', ativo ? 'true' : 'false');
-      btn.setAttribute('aria-label', ativo ? 'Pausar paisagem sonora' : 'Ativar paisagem sonora');
-      btn.title = ativo ? 'Pausar paisagem sonora' : 'Ativar paisagem sonora';
+      var texto = ativo ? 'Pausar paisagem sonora (nao mexe no microfone)' : 'Ativar paisagem sonora (nao abre microfone)';
+      btn.setAttribute('aria-label', texto);
+      btn.title = texto;
     }
     if (range) range.value = String(volume);
     if (label) label.textContent = volume + '%';
@@ -556,7 +566,7 @@
       Ambiente.definirVolume(volumeAmbiente() / 100);
       Ambiente.iniciar().then(function () {
         salvarAmbiente({ ambienteAtivo: true });
-        toast('Paisagem sonora ativada.');
+        toast('Paisagem sonora ativada. Para falar, use "Ativar agente" no topo.');
       }).catch(function (erro) {
         toast((erro && erro.message) || 'Nao consegui iniciar a paisagem sonora.', 'bad');
       });
@@ -1070,7 +1080,7 @@
   }
 
   function vozSensibilidade() {
-    return Math.max(40, Math.min(100, Number(State.config && State.config.vozSensibilidade) || 86));
+    return Math.max(40, Math.min(100, Number(State.config && State.config.vozSensibilidade) || 92));
   }
 
   function audioDoAgente(extra) {
@@ -1099,13 +1109,13 @@
     var s = vozSensibilidade();
     var t = (s - 40) / 60;
     return {
-      vadThreshold: Math.max(0.18, Math.min(0.42, 0.42 - t * 0.24)),
-      vadSilence: Math.max(0.9, Math.min(1.65, 1.65 - t * 0.45)),
+      vadThreshold: Math.max(0.14, Math.min(0.36, 0.36 - t * 0.22)),
+      vadSilence: Math.max(0.82, Math.min(1.45, 1.45 - t * 0.42)),
       minSpeechMs: Math.round(Math.max(90, 220 - t * 100)),
-      minSilenceMs: Math.round(Math.max(240, 460 - t * 160)),
-      loteSilencioMs: Math.round(1500 + (1 - t) * 650),
-      limiarMin: 0.0012 + (1 - t) * 0.0028,
-      limiarMultiplicador: 1.45 + (1 - t) * 1.65
+      minSilenceMs: Math.round(Math.max(210, 420 - t * 160)),
+      loteSilencioMs: Math.round(1250 + (1 - t) * 560),
+      limiarMin: 0.00075 + (1 - t) * 0.0022,
+      limiarMultiplicador: 1.25 + (1 - t) * 1.35
     };
   }
 
@@ -1171,7 +1181,7 @@
     var interrupt = $('#cfg-voz-interrupt');
     if (select) salvarMicDeviceId(select.value || '');
     State.config = Store.Config.set(State.user.id, {
-      vozSensibilidade: range ? Math.max(40, Math.min(100, Number(range.value) || 86)) : vozSensibilidade(),
+      vozSensibilidade: range ? Math.max(40, Math.min(100, Number(range.value) || 92)) : vozSensibilidade(),
       vozInterromper: interrupt ? interrupt.checked : true
     });
     renderVoiceProfileControls();
@@ -2154,7 +2164,9 @@
       if (window.Ambiente) Ambiente.reduzir(true);
       if (saiuAudio === false && !session.avisoVoz) {
         session.avisoVoz = true;
-        toast('A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
+        toast(usarVozNatural()
+          ? 'A voz natural nao iniciou. Teste a chave e a voz em Chave & Modelo.'
+          : 'A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
       }
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
@@ -3403,7 +3415,7 @@
     $('#cfg-ferramentas').checked = c.ferramentas !== false;
     if ($('#cfg-voz-realtime')) $('#cfg-voz-realtime').value = c.vozRealtime || 'marin';
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
-    if ($('#cfg-elevenlabs-voice')) $('#cfg-elevenlabs-voice').value = c.elevenLabsVoiceId || 'JBFqnCBsd6RMkjVDRZzb';
+    aplicarVozElevenLabs(c.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE);
     if ($('#cfg-elevenlabs-model')) $('#cfg-elevenlabs-model').value = c.elevenLabsModel || 'eleven_turbo_v2_5';
     if ($('#cfg-ambiente-volume')) $('#cfg-ambiente-volume').value = String(volumeAmbiente());
     if ($('#cfg-ambiente-volume-label')) $('#cfg-ambiente-volume-label').textContent = volumeAmbiente() + '%';
@@ -3445,22 +3457,248 @@
     input.value = State.elevenLabsKey || '';
     if (!result) return;
     result.className = State.elevenLabsKey ? 'test-result show ok' : 'test-result';
-    result.textContent = State.elevenLabsKey ? 'Voz natural pronta para o proximo agente.' : '';
+    var vozNome = nomeDaVozElevenLabs(State.config && State.config.elevenLabsVoiceId);
+    result.textContent = State.elevenLabsKey
+      ? (vozNome ? 'Voz natural pronta: ' + vozNome + '.' : 'Voz natural pronta para o proximo agente.')
+      : '';
+  }
+
+  function labelsDaVozElevenLabs(voice) {
+    if (!voice || !voice.labels || typeof voice.labels !== 'object') return '';
+    return Object.keys(voice.labels).map(function (key) {
+      return voice.labels[key];
+    }).filter(Boolean).join(', ');
+  }
+
+  function textoDaVozElevenLabs(voice) {
+    if (!voice) return '';
+    return [voice.name || voice.id, labelsDaVozElevenLabs(voice)].filter(Boolean).join(' - ');
+  }
+
+  function nomeDaVozElevenLabs(id) {
+    id = String(id || '').trim();
+    if (!id) return '';
+    var encontrada = ElevenLabsVoices.filter(function (voice) { return voice && voice.id === id; })[0];
+    return encontrada ? textoDaVozElevenLabs(encontrada) : '';
+  }
+
+  function vozElevenLabsAtual() {
+    var manual = $('#cfg-elevenlabs-voice');
+    var select = $('#cfg-elevenlabs-voice-select');
+    return String(
+      (manual && manual.value.trim()) ||
+      (select && select.value) ||
+      (State.config && State.config.elevenLabsVoiceId) ||
+      DEFAULT_ELEVENLABS_VOICE
+    ).trim();
+  }
+
+  function aplicarVozElevenLabs(id) {
+    id = String(id || '').trim();
+    var manual = $('#cfg-elevenlabs-voice');
+    var select = $('#cfg-elevenlabs-voice-select');
+    if (manual) manual.value = id;
+    if (!select) return;
+    if (id && !Array.prototype.some.call(select.options, function (opt) { return opt.value === id; })) {
+      var opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = 'ID manual salvo - ' + id;
+      select.appendChild(opt);
+    }
+    select.value = id;
+  }
+
+  function scoreVozElevenLabs(voice) {
+    if (!voice || !voice.id) return -999;
+    var labels = voice.labels && typeof voice.labels === 'object'
+      ? Object.keys(voice.labels).map(function (key) { return key + ' ' + voice.labels[key]; }).join(' ')
+      : '';
+    var texto = ((voice.name || '') + ' ' + labels).toLowerCase();
+    var score = 0;
+    if (/portugu|portuguese|brasil|brazil|pt[-_ ]?br|pt[-_ ]?pt/.test(texto)) score += 20;
+    if (/convers|natural|warm|calm|clear|casual|expressive|friendly/.test(texto)) score += 4;
+    if (/clone|robot|synthetic|advertis|narrator/.test(texto)) score -= 3;
+    return score;
+  }
+
+  function escolherVozPadraoElevenLabs(voices) {
+    voices = Array.isArray(voices) ? voices.filter(function (voice) { return voice && voice.id; }) : [];
+    if (!voices.length) return vozElevenLabsAtual() || DEFAULT_ELEVENLABS_VOICE;
+    var atual = vozElevenLabsAtual();
+    if (atual && atual !== DEFAULT_ELEVENLABS_VOICE && voices.some(function (voice) { return voice.id === atual; })) return atual;
+    var ordenadas = voices.slice().sort(function (a, b) {
+      return scoreVozElevenLabs(b) - scoreVozElevenLabs(a);
+    });
+    return (ordenadas[0] && ordenadas[0].id) || atual || DEFAULT_ELEVENLABS_VOICE;
   }
 
   function preencherVozesElevenLabs(voices) {
     var list = $('#elevenlabs-voices');
-    if (!list || !Array.isArray(voices)) return;
-    list.innerHTML = '';
-    voices.forEach(function (voice) {
+    var select = $('#cfg-elevenlabs-voice-select');
+    ElevenLabsVoices = Array.isArray(voices)
+      ? voices.filter(function (voice) { return voice && voice.id; })
+      : [];
+    if (list) list.innerHTML = '';
+    if (select) {
+      select.innerHTML = '';
+      var auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = ElevenLabsVoices.length ? 'Escolher automaticamente em portugues' : 'Nenhuma voz carregada ainda';
+      select.appendChild(auto);
+    }
+    ElevenLabsVoices.forEach(function (voice) {
       if (!voice || !voice.id) return;
-      var option = document.createElement('option');
-      option.value = voice.id;
-      var labels = voice.labels && typeof voice.labels === 'object'
-        ? Object.keys(voice.labels).map(function (key) { return voice.labels[key]; }).filter(Boolean).join(', ')
-        : '';
-      option.label = [voice.name, labels].filter(Boolean).join(' - ');
-      list.appendChild(option);
+      var label = textoDaVozElevenLabs(voice);
+      if (list) {
+        var item = document.createElement('option');
+        item.value = voice.id;
+        item.label = label;
+        list.appendChild(item);
+      }
+      if (select) {
+        var opt = document.createElement('option');
+        opt.value = voice.id;
+        opt.textContent = label || voice.id;
+        select.appendChild(opt);
+      }
+    });
+    var atual = vozElevenLabsAtual();
+    if (!atual || atual === DEFAULT_ELEVENLABS_VOICE) atual = escolherVozPadraoElevenLabs(ElevenLabsVoices);
+    aplicarVozElevenLabs(atual);
+    return atual;
+  }
+
+  function carregarVozesElevenLabs(key, quiet) {
+    key = String(key || '').trim();
+    var out = $('#elevenlabs-result');
+    if (key.length < 12) {
+      preencherVozesElevenLabs([]);
+      return Promise.resolve([]);
+    }
+    if (!quiet && out) {
+      out.className = 'test-result show';
+      out.textContent = 'Carregando vozes naturais...';
+    }
+    return fetch('/api/speech/voices', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey: key })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) {
+          var erro = new Error((body.error && body.error.message) || 'Nao consegui carregar suas vozes.');
+          if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+            registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+          }
+          throw erro;
+        }
+        var voz = preencherVozesElevenLabs(body.voices);
+        if (State.user && State.config && voz && (!State.config.elevenLabsVoiceId || State.config.elevenLabsVoiceId === DEFAULT_ELEVENLABS_VOICE)) {
+          State.config = Store.Config.set(State.user.id, { elevenLabsVoiceId: voz });
+          aplicarVozElevenLabs(voz);
+        }
+        if (!quiet && out) {
+          out.className = 'test-result show ok';
+          out.textContent = 'Vozes carregadas. Voz selecionada: ' + (nomeDaVozElevenLabs(voz) || voz) + '.';
+        }
+        limparAvisoDeLimiteApi('elevenlabs');
+        return body.voices || [];
+      });
+    });
+  }
+
+  function reconectarAgenteParaVozNatural() {
+    if (!State.agente.ligado) return;
+    if (agenteNavegadorAtivo()) {
+      encerrarVozDoNavegador();
+      atualizarAgenteUI('conectando', 'trocando para voz natural');
+      setTimeout(function () { if (State.agente.ligado) conectarVoz(false); }, 320);
+      return;
+    }
+    if (Voz.ligado()) {
+      State.agente.parandoDeProposito = true;
+      Voz.encerrar();
+      atualizarAgenteUI('conectando', 'trocando para voz natural');
+      setTimeout(function () { if (State.agente.ligado) conectarVoz(false); }, 420);
+    }
+  }
+
+  function testarVozNaturalElevenLabs() {
+    var key = String(($('#elevenlabs-key') && $('#elevenlabs-key').value) || State.elevenLabsKey || '').trim();
+    var out = $('#elevenlabs-result');
+    var btn = $('#btn-test-elevenlabs-voice');
+    var voiceId = vozElevenLabsAtual();
+    if (!voiceId || voiceId === DEFAULT_ELEVENLABS_VOICE) {
+      voiceId = escolherVozPadraoElevenLabs(ElevenLabsVoices);
+      aplicarVozElevenLabs(voiceId);
+    }
+    if (key.length < 12) {
+      if (out) {
+        out.className = 'test-result show bad';
+        out.textContent = 'Cole e salve uma chave da ElevenLabs antes de testar.';
+      }
+      return;
+    }
+    if (!voiceId) {
+      if (out) {
+        out.className = 'test-result show bad';
+        out.textContent = 'Escolha uma voz natural antes de testar.';
+      }
+      return;
+    }
+    if (State.testeVozAudio) {
+      try { State.testeVozAudio.pause(); } catch (_) {}
+      State.testeVozAudio = null;
+    }
+    if (btn) btn.disabled = true;
+    if (out) {
+      out.className = 'test-result show';
+      out.textContent = 'Gerando teste com voz natural...';
+    }
+    fetch('/api/speech/synthesize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        apiKey: key,
+        text: 'Oi. Agora estou usando uma voz natural para conversar com voce em tempo real.',
+        voiceId: voiceId,
+        modelId: ($('#cfg-elevenlabs-model') && $('#cfg-elevenlabs-model').value) || 'eleven_turbo_v2_5'
+      })
+    }).then(function (res) {
+      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
+        var erro = new Error((body.error && body.error.message) || 'Nao consegui gerar o teste de voz.');
+        if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
+          registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
+        }
+        throw erro;
+      });
+      return res.blob();
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      State.testeVozAudio = audio;
+      audio.onended = function () {
+        URL.revokeObjectURL(url);
+        if (State.testeVozAudio === audio) State.testeVozAudio = null;
+      };
+      audio.onerror = function () {
+        URL.revokeObjectURL(url);
+        if (State.testeVozAudio === audio) State.testeVozAudio = null;
+      };
+      return audio.play().then(function () {
+        limparAvisoDeLimiteApi('elevenlabs');
+        if (out) {
+          out.className = 'test-result show ok';
+          out.textContent = 'Teste tocando com voz natural: ' + (nomeDaVozElevenLabs(voiceId) || voiceId) + '.';
+        }
+      });
+    }).catch(function (erro) {
+      if (out) {
+        out.className = 'test-result show bad';
+        out.textContent = (erro && erro.message) || 'Nao consegui tocar a voz natural.';
+      }
+    }).then(function () {
+      if (btn) btn.disabled = false;
     });
   }
 
@@ -3569,33 +3807,29 @@
       btn.disabled = true;
       out.className = 'test-result show';
       out.textContent = 'Validando a chave de voz...';
-      fetch('/api/speech/voices', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ apiKey: key })
-      }).then(function (res) {
-        return res.json().catch(function () { return {}; }).then(function (body) {
-          if (!res.ok) {
-            var erro = new Error((body.error && body.error.message) || 'Nao consegui validar a chave de voz.');
-            if (res.status === 429 || /quota|credit|billing|balance|insufficient/i.test(erro.message)) {
-              registrarLimiteDaApi('elevenlabs', erro, /quota|credit|billing|balance|insufficient/i.test(erro.message) ? 'quota_exhausted' : 'rate_limit');
-            }
-            throw erro;
-          }
-          preencherVozesElevenLabs(body.voices);
-          return Store.ApiKey.save(State.user.id, 'elevenlabs', key);
+      carregarVozesElevenLabs(key, false).then(function (voices) {
+        var voiceId = vozElevenLabsAtual();
+        if (!voiceId || voiceId === DEFAULT_ELEVENLABS_VOICE) {
+          voiceId = escolherVozPadraoElevenLabs(voices);
+          aplicarVozElevenLabs(voiceId);
+        }
+        return Store.ApiKey.save(State.user.id, 'elevenlabs', key).then(function () {
+          return voiceId;
         });
-      }).then(function () {
+      }).then(function (voiceId) {
         State.elevenLabsKey = key;
         limparAvisoDeLimiteApi('elevenlabs');
         State.config = Store.Config.set(State.user.id, {
-          elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb',
+          elevenLabsVoiceId: voiceId || DEFAULT_ELEVENLABS_VOICE,
           elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5'
         });
+        aplicarVozElevenLabs(State.config.elevenLabsVoiceId);
         renderElevenLabsKeyUI();
         out.className = 'test-result show ok';
-        out.textContent = 'Chave de voz validada e pronta.';
-        toast('Voz natural validada. Ligue o agente para testar.', 'ok');
+        out.textContent = 'Chave validada. Voz ativa: ' + (nomeDaVozElevenLabs(State.config.elevenLabsVoiceId) || State.config.elevenLabsVoiceId) + '.';
+        reconectarAgenteParaVozNatural();
+        talvezLigarAgenteSozinho();
+        toast('Voz natural validada e aplicada.', 'ok');
       }).catch(function (erro) {
         out.className = 'test-result show bad';
         out.textContent = (erro && erro.message) || 'Nao consegui validar a chave de voz.';
@@ -3607,9 +3841,28 @@
     $('#btn-clear-elevenlabs-key').addEventListener('click', function () {
       Store.ApiKey.clear(State.user.id, 'elevenlabs');
       State.elevenLabsKey = '';
+      ElevenLabsVoices = [];
+      State.config = Store.Config.set(State.user.id, { elevenLabsVoiceId: '' });
+      preencherVozesElevenLabs([]);
+      aplicarVozElevenLabs('');
       renderElevenLabsKeyUI();
       toast('Chave de voz removida.');
     });
+
+    var elevenSelect = $('#cfg-elevenlabs-voice-select');
+    var elevenManual = $('#cfg-elevenlabs-voice');
+    var elevenTest = $('#btn-test-elevenlabs-voice');
+    if (elevenSelect) {
+      elevenSelect.addEventListener('change', function () {
+        aplicarVozElevenLabs(elevenSelect.value || '');
+      });
+    }
+    if (elevenManual) {
+      elevenManual.addEventListener('change', function () {
+        aplicarVozElevenLabs(elevenManual.value.trim());
+      });
+    }
+    if (elevenTest) elevenTest.addEventListener('click', testarVozNaturalElevenLabs);
 
     $('#cfg-system-custom').addEventListener('change', function (e) {
       $('#field-system').classList.toggle('hidden', !e.target.checked);
@@ -3627,7 +3880,7 @@
         tetoMensalUSD: Math.max(0, parseFloat($('#cfg-teto').value) || 0),
         vozRealtime: $('#cfg-voz-realtime').value || 'marin',
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',
-        elevenLabsVoiceId: $('#cfg-elevenlabs-voice').value.trim() || 'JBFqnCBsd6RMkjVDRZzb',
+        elevenLabsVoiceId: vozElevenLabsAtual() || DEFAULT_ELEVENLABS_VOICE,
         elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5',
         ambienteVolume: Math.max(0, Math.min(45, Number($('#cfg-ambiente-volume').value) || 0)),
         vozOciosoMin: parseInt($('#cfg-voz-ocioso').value, 10) || 0,

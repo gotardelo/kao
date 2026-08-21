@@ -454,7 +454,7 @@
     agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar
     vozOciosoMin: 0,          // 0 = nunca descansa sozinho
     vozModelo: 'gpt-realtime-2.1',
-    vozSensibilidade: 86,
+    vozSensibilidade: 92,
     vozInterromper: true,
     maxTokens: 8000,
     showThinking: true,
