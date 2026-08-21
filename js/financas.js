@@ -213,7 +213,7 @@
       };
     },
 
-    limpar: function (uid) { localStorage.removeItem(Store.keys.financas(uid)); },
+    limpar: function (uid) { Store.remove(Store.keys.financas(uid)); },
 
     /* ============================================================
        RESUMO PARA O PROMPT

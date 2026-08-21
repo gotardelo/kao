@@ -253,7 +253,7 @@
   }
 
   function esquecer(uid) {
-    localStorage.removeItem(Store.keys.avatar(uid));
+    Store.remove(Store.keys.avatar(uid));
   }
 
   /* ============================================================

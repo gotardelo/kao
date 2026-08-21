@@ -149,7 +149,7 @@
       return Memoria.tudo(uid).diario.filter(function (d) { return d.data === data; })[0] || null;
     },
 
-    limpar: function (uid) { localStorage.removeItem(Store.keys.memoria(uid)); },
+    limpar: function (uid) { Store.remove(Store.keys.memoria(uid)); },
 
     /* ============================================================
        RESUMO PARA O PROMPT

@@ -6,5 +6,6 @@ dist/
 public/
 .next/
 .open-next/
+.vinext/
 .wrangler/
 .tmp-sites-template/

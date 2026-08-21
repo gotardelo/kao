@@ -184,8 +184,13 @@
     Wizard.montar();
     Wizard.definirErro(function (msg) { toast(msg, 'bad'); });
 
-    var user = Auth.current();
-    if (user) { enterApp(user); } else { showAuth(); }
+    Auth.ready().then(function (user) {
+      if (user) enterApp(user);
+      else {
+        showAuth();
+        if (Auth.syncNotice) toast(Auth.syncNotice, 'warn');
+      }
+    });
 
     setTimeout(function () {
       var sp = $('#splash');

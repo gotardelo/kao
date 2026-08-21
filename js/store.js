@@ -25,15 +25,24 @@
     apiAlert: function (uid) { return NS + 'api-alert:' + uid; },
     openFinance: function (uid) { return NS + 'open-finance:' + uid; }
   };
+  var SYNC_META_KEY = NS + 'sync:meta';
+  var SYNC_QUEUE_KEY = NS + 'sync:queue';
+  var SYNC_PREFIXES = [
+    'convs', 'config', 'usage', 'progress', 'avatar', 'profile',
+    'persona', 'memoria', 'financas', 'api-alert', 'open-finance'
+  ];
+  var syncTimer = null;
+  var syncInFlight = null;
+  var applyingRemote = false;
 
   /* ---------- helpers de JSON ---------- */
-  function read(key, fallback) {
+  function rawRead(key, fallback) {
     try {
       var raw = localStorage.getItem(key);
       return raw ? JSON.parse(raw) : fallback;
     } catch (e) { return fallback; }
   }
-  function write(key, value) {
+  function rawWrite(key, value) {
     try {
       localStorage.setItem(key, JSON.stringify(value));
       return true;
@@ -42,9 +51,160 @@
       return false;
     }
   }
+  function read(key, fallback) { return rawRead(key, fallback); }
+  function write(key, value) {
+    var ok = rawWrite(key, value);
+    if (ok) markLocalChange(key, localStorage.getItem(key));
+    return ok;
+  }
+  function remove(key) {
+    try {
+      localStorage.removeItem(key);
+      markLocalChange(key, null);
+      return true;
+    } catch (e) {
+      console.error('[TDAHZEI] falha ao apagar', key, e);
+      return false;
+    }
+  }
   function uid() {
     if (global.crypto && crypto.randomUUID) return crypto.randomUUID();
     return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  /* ============================================================
+     SINCRONIZACAO COM O BANCO DO SITE
+     ============================================================ */
+  function api(action, data) {
+    return fetch('/api/sync', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ action: action }, data || {}))
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) {
+          var err = new Error((body.error && body.error.message) || 'Nao foi possivel sincronizar.');
+          err.status = res.status;
+          err.code = body.error && body.error.code;
+          throw err;
+        }
+        return body;
+      });
+    });
+  }
+
+  function sessionUid() {
+    var s = rawRead(K.session, null);
+    return s && s.userId ? String(s.userId) : '';
+  }
+
+  function syncableKey(key, uid_) {
+    if (!uid_ || typeof key !== 'string') return false;
+    if (key === K.users || key === K.session) return false;
+    if (key === SYNC_META_KEY || key === SYNC_QUEUE_KEY) return false;
+    if (key.indexOf(NS + 'sync:') === 0 || key.indexOf(NS + 'apikey:') === 0) return false;
+    if (key.slice(-uid_.length - 1) !== ':' + uid_) return false;
+    var prefix = key.slice(NS.length, key.length - uid_.length - 1);
+    return SYNC_PREFIXES.indexOf(prefix) > -1;
+  }
+
+  function markLocalChange(key, rawValue) {
+    if (applyingRemote) return;
+    var uid_ = sessionUid();
+    if (!syncableKey(key, uid_)) return;
+    var now = Date.now();
+    var meta = rawRead(SYNC_META_KEY, {});
+    var queue = rawRead(SYNC_QUEUE_KEY, {});
+    meta[key] = now;
+    queue[key] = { key: key, value: rawValue, updatedAt: now };
+    rawWrite(SYNC_META_KEY, meta);
+    rawWrite(SYNC_QUEUE_KEY, queue);
+    schedulePush();
+  }
+
+  function schedulePush() {
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () { Sync.flush().catch(function () {}); }, 700);
+  }
+
+  function applyRemoteRecords(records) {
+    var meta = rawRead(SYNC_META_KEY, {});
+    applyingRemote = true;
+    try {
+      (records || []).forEach(function (record) {
+        var key = String(record.key || '');
+        var updatedAt = Number(record.updatedAt || 0);
+        if (!key) return;
+        if ((meta[key] || 0) > updatedAt) return;
+        if (record.value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, String(record.value));
+        meta[key] = updatedAt;
+      });
+    } finally {
+      applyingRemote = false;
+      rawWrite(SYNC_META_KEY, meta);
+    }
+  }
+
+  function parseRaw(raw) {
+    try { return raw ? JSON.parse(raw) : null; }
+    catch (e) { return null; }
+  }
+
+  function stableString(value) {
+    try { return JSON.stringify(value); }
+    catch (e) { return String(value); }
+  }
+
+  function emptyValue(value) {
+    if (value === null || value === undefined || value === '') return true;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value).length === 0;
+    return false;
+  }
+
+  function mergeArrays(target, source) {
+    var out = Array.isArray(target) ? target.slice() : [];
+    var byId = {};
+    out.forEach(function (item, index) {
+      if (item && typeof item === 'object' && item.id) byId[item.id] = index;
+    });
+    (Array.isArray(source) ? source : []).forEach(function (item) {
+      if (item && typeof item === 'object' && item.id && byId[item.id] !== undefined) {
+        out[byId[item.id]] = mergeData(out[byId[item.id]], item);
+        return;
+      }
+      var sig = stableString(item);
+      for (var i = 0; i < out.length; i++) if (stableString(out[i]) === sig) return;
+      out.push(item);
+    });
+    return out;
+  }
+
+  function mergeData(target, source) {
+    if (emptyValue(target)) return source;
+    if (emptyValue(source)) return target;
+    if (Array.isArray(target) || Array.isArray(source)) return mergeArrays(target, source);
+    if (typeof target === 'object' && typeof source === 'object') {
+      var out = Object.assign({}, target);
+      Object.keys(source).forEach(function (key) {
+        out[key] = Object.prototype.hasOwnProperty.call(out, key)
+          ? mergeData(out[key], source[key])
+          : source[key];
+      });
+      return out;
+    }
+    return target;
+  }
+
+  function mergeRaw(targetRaw, sourceRaw) {
+    if (!targetRaw) return sourceRaw;
+    if (!sourceRaw) return targetRaw;
+    var target = parseRaw(targetRaw);
+    var source = parseRaw(sourceRaw);
+    if (target === null || source === null) return targetRaw;
+    return JSON.stringify(mergeData(target, source));
   }
 
   /* ============================================================
@@ -157,6 +317,19 @@
     byId: function (id) {
       return Users.all().filter(function (u) { return u.id === id; })[0] || null;
     },
+    upsert: function (user) {
+      if (!user || !user.id) return null;
+      var list = Users.all(), found = false;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === user.id || list[i].email === user.email) {
+          list[i] = Object.assign({}, list[i], user);
+          found = true;
+        }
+      }
+      if (!found) list.push(user);
+      Users.save(list);
+      return user;
+    },
     update: function (id, patch) {
       var list = Users.all(), found = null;
       for (var i = 0; i < list.length; i++) {
@@ -170,6 +343,105 @@
   /* ============================================================
      CONFIGURAÇÕES POR USUÁRIO
      ============================================================ */
+  var Sync = {
+    request: api,
+
+    saveUser: function (user, patch) {
+      return Users.upsert(Object.assign({}, user || {}, patch || {}));
+    },
+
+    pull: function () {
+      return api('pull').then(function (out) {
+        if (out.user) Users.upsert(out.user);
+        applyRemoteRecords(out.records || []);
+        return out;
+      });
+    },
+
+    flush: function () {
+      if (syncInFlight) return syncInFlight;
+      var queue = rawRead(SYNC_QUEUE_KEY, {});
+      var records = Object.keys(queue).map(function (key) { return queue[key]; });
+      if (!records.length || !sessionUid()) return Promise.resolve({ ok: true, saved: 0 });
+      syncInFlight = api('push', { records: records }).then(function (out) {
+        var fresh = rawRead(SYNC_QUEUE_KEY, {});
+        records.forEach(function (record) {
+          if (fresh[record.key] && fresh[record.key].updatedAt === record.updatedAt) delete fresh[record.key];
+        });
+        rawWrite(SYNC_QUEUE_KEY, fresh);
+        return out;
+      }).finally(function () {
+        syncInFlight = null;
+      });
+      return syncInFlight;
+    },
+
+    pushAll: function (uid_, touch) {
+      var queue = rawRead(SYNC_QUEUE_KEY, {});
+      var meta = rawRead(SYNC_META_KEY, {});
+      var now = Date.now();
+      Object.keys(localStorage).forEach(function (key) {
+        if (!syncableKey(key, uid_)) return;
+        var updatedAt = touch ? now : (meta[key] || now);
+        meta[key] = updatedAt;
+        queue[key] = { key: key, value: localStorage.getItem(key), updatedAt: updatedAt };
+      });
+      rawWrite(SYNC_META_KEY, meta);
+      rawWrite(SYNC_QUEUE_KEY, queue);
+      return Sync.flush();
+    },
+
+    adoptLocalUsers: function (email, targetUid) {
+      var e = String(email || '').trim().toLowerCase();
+      var users = Users.all();
+      var oldIds = users
+        .filter(function (u) { return u.email === e && u.id !== targetUid; })
+        .map(function (u) { return u.id; });
+      if (!oldIds.length) return false;
+
+      var meta = rawRead(SYNC_META_KEY, {});
+      oldIds.forEach(function (oldId) {
+        Object.keys(localStorage).forEach(function (key) {
+          if (key.slice(-oldId.length - 1) !== ':' + oldId) return;
+          var nextKey = key.slice(0, key.length - oldId.length) + targetUid;
+          var oldRaw = localStorage.getItem(key);
+          var nextRaw = mergeRaw(localStorage.getItem(nextKey), oldRaw);
+          if (nextRaw !== null) localStorage.setItem(nextKey, nextRaw);
+          localStorage.removeItem(key);
+          if (syncableKey(nextKey, targetUid)) {
+            var now = Date.now();
+            meta[nextKey] = now;
+            var queue = rawRead(SYNC_QUEUE_KEY, {});
+            queue[nextKey] = { key: nextKey, value: localStorage.getItem(nextKey), updatedAt: now };
+            rawWrite(SYNC_QUEUE_KEY, queue);
+          }
+        });
+      });
+      rawWrite(SYNC_META_KEY, meta);
+      Users.save(users.filter(function (u) { return u.email !== e || u.id === targetUid; }));
+      return true;
+    },
+
+    vaultSave: function (provider, plain) {
+      return api('vaultSave', { provider: provider || 'openai', value: plain || '' });
+    },
+
+    vaultLoad: function (provider) {
+      return api('vaultLoad', { provider: provider || 'openai' }).then(function (out) {
+        return String(out.value || '');
+      });
+    },
+
+    vaultClear: function (provider) {
+      return api('vaultClear', { provider: provider || 'openai' });
+    },
+
+    logout: function () {
+      rawWrite(SYNC_QUEUE_KEY, {});
+      return api('logout').catch(function () {});
+    }
+  };
+
   var DEFAULT_CONFIG = {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
@@ -245,9 +517,22 @@
      CHAVE DA API (criptografada)
      ============================================================ */
   var ApiKey = {
+    _saveLocal: function (uid_, provider, plain) {
+      return Crypto.encrypt(plain).then(function (payload) {
+        payload.hint = plain.slice(0, 12) + '...' + plain.slice(-4);
+        payload.savedAt = Date.now();
+        write(K.apikey(uid_, provider), payload);
+      });
+    },
     save: function (uid_, provider, plain) {
       if (arguments.length === 2) { plain = provider; provider = 'openai'; }
-      if (!plain) { localStorage.removeItem(K.apikey(uid_, provider)); return Promise.resolve(); }
+      if (!plain) {
+        localStorage.removeItem(K.apikey(uid_, provider));
+        return Sync.vaultClear(provider).catch(function () {});
+      }
+      return ApiKey._saveLocal(uid_, provider, plain).then(function () {
+        Sync.vaultSave(provider, plain).catch(function () {});
+      });
       return Crypto.encrypt(plain).then(function (payload) {
         payload.hint = plain.slice(0, 12) + '…' + plain.slice(-4);
         payload.savedAt = Date.now();
@@ -258,8 +543,16 @@
       provider = provider || 'openai';
       var payload = read(K.apikey(uid_, provider), null);
       if (!payload && provider === 'openai') payload = read(K.apikeyLegacy(uid_), null);
-      if (!payload) return Promise.resolve('');
-      return Crypto.decrypt(payload);
+      if (!payload) {
+        return Sync.vaultLoad(provider).then(function (plain) {
+          if (!plain) return '';
+          return ApiKey._saveLocal(uid_, provider, plain).then(function () { return plain; });
+        }).catch(function () { return ''; });
+      }
+      return Crypto.decrypt(payload).then(function (plain) {
+        if (plain) Sync.vaultSave(provider, plain).catch(function () {});
+        return plain;
+      });
     },
     meta: function (uid_, provider) {
       provider = provider || 'openai';
@@ -270,6 +563,20 @@
       provider = provider || 'openai';
       localStorage.removeItem(K.apikey(uid_, provider));
       if (provider === 'openai') localStorage.removeItem(K.apikeyLegacy(uid_));
+      Sync.vaultClear(provider).catch(function () {});
+    },
+    syncVault: function (uid_) {
+      var providers = {};
+      Object.keys(localStorage).forEach(function (key) {
+        if (key === K.apikeyLegacy(uid_)) providers.openai = true;
+        var marker = NS + 'apikey:';
+        if (key.indexOf(marker) === 0 && key.slice(-uid_.length - 1) === ':' + uid_) {
+          providers[key.slice(marker.length, key.length - uid_.length - 1)] = true;
+        }
+      });
+      return Promise.all(Object.keys(providers).map(function (provider) {
+        return ApiKey.load(uid_, provider).then(function () {});
+      }));
     }
   };
 
@@ -306,7 +613,7 @@
     remove: function (uid_, id) {
       write(K.convs(uid_), Convs.all(uid_).filter(function (c) { return c.id !== id; }));
     },
-    wipe: function (uid_) { localStorage.removeItem(K.convs(uid_)); }
+    wipe: function (uid_) { remove(K.convs(uid_)); }
   };
 
   /* ============================================================
@@ -404,7 +711,7 @@
       };
     },
 
-    reset: function (uid_) { localStorage.removeItem(K.usage(uid_)); }
+    reset: function (uid_) { remove(K.usage(uid_)); }
   };
 
   /* Erros de cota sobrevivem a um reload, mas nunca guardam chaves ou resposta crua da API. */
@@ -417,7 +724,7 @@
       write(K.apiAlert(uid_), next);
       return next;
     },
-    clear: function (uid_) { localStorage.removeItem(K.apiAlert(uid_)); }
+    clear: function (uid_) { remove(K.apiAlert(uid_)); }
   };
 
   /* ============================================================
@@ -487,7 +794,7 @@
       return Progress.reward(uid_, 25, 'vitoria');
     },
 
-    reset: function (uid_) { localStorage.removeItem(K.progress(uid_)); }
+    reset: function (uid_) { remove(K.progress(uid_)); }
   };
 
   /* Account credentials stay separate so a person can restart their setup
@@ -495,15 +802,23 @@
   var Account = {
     reset: function (uid_) {
       var marker = ':' + uid_;
+      var providers = {};
       Object.keys(localStorage).forEach(function (key) {
-        if (key.indexOf(NS) === 0 && key.indexOf(marker) > -1) localStorage.removeItem(key);
+        if (key === K.apikeyLegacy(uid_)) providers.openai = true;
+        if (key.indexOf(NS + 'apikey:') === 0 && key.slice(-uid_.length - 1) === ':' + uid_) {
+          providers[key.slice((NS + 'apikey:').length, key.length - uid_.length - 1)] = true;
+        }
+        if (key.indexOf(NS) === 0 && key.indexOf(marker) > -1) remove(key);
+      });
+      Object.keys(providers).forEach(function (provider) {
+        Sync.vaultClear(provider).catch(function () {});
       });
     }
   };
 
   global.Store = {
-    keys: K, read: read, write: write, uid: uid,
-    Crypto: Crypto, Users: Users, Config: Config,
+    keys: K, read: read, write: write, remove: remove, uid: uid,
+    Crypto: Crypto, Users: Users, Sync: Sync, Config: Config,
     ApiKey: ApiKey, Convs: Convs, Usage: Usage, ApiAlert: ApiAlert,
     Profile: Profile, Persona: PersonaStore, Progress: Progress, Account: Account,
     DEFAULT_CONFIG: DEFAULT_CONFIG
