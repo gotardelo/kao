@@ -15,6 +15,9 @@ Instalado agora:
 - Poppler / `pdftotext` via Winget.
 - `whisper-cli.exe` em `~/tools/whisper.cpp/Release/whisper-cli.exe`.
 - Modelo `ggml-base.bin` em `~/models/ggml-base.bin`.
+- Claude Code CLI `2.1.238`.
+- Biblioteca Python `elevenlabs` para voz natural quando `ELEVENLABS_API_KEY` estiver no ambiente.
+- Python 3.12 isolado em `~/tools/jarvisos-kokoro` com Kokoro para voz offline.
 
 Ainda depende de voce ter o Claude Code CLI autenticado no terminal:
 
@@ -40,6 +43,17 @@ Rode o loop:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\jarvis.ps1 -Mic "NOME DO MICROFONE"
+```
+
+Escolha a boca:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\jarvis.ps1 -Mic "NOME DO MICROFONE" -VoiceBackend windows
+
+$env:ELEVENLABS_API_KEY="sua_chave"
+powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\jarvis.ps1 -Mic "NOME DO MICROFONE" -VoiceBackend elevenlabs -ElevenVoiceId "ID_DA_VOZ"
+
+powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\jarvis.ps1 -Mic "NOME DO MICROFONE" -VoiceBackend kokoro
 ```
 
 Rodar a caixa sem voz:

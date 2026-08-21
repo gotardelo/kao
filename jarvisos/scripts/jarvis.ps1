@@ -4,7 +4,13 @@ param(
   [string]$Whisper = "$HOME\tools\whisper.cpp\Release\whisper-cli.exe",
   [string]$Ffmpeg = "ffmpeg",
   [string]$Mic = "",
-  [int]$Seconds = 8
+  [int]$Seconds = 8,
+  [ValidateSet('windows', 'elevenlabs', 'kokoro')]
+  [string]$VoiceBackend = 'windows',
+  [string]$ElevenVoiceId = "",
+  [string]$KokoroVoice = "pf_dora",
+  [double]$KokoroSpeed = 1.0,
+  [string]$KokoroPython = "$HOME\tools\jarvisos-kokoro\Scripts\python.exe"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,10 +32,49 @@ if (-not $Mic) {
   exit 1
 }
 
-Add-Type -AssemblyName System.Speech
-$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$speaker.Rate = 1
-$speaker.Volume = 100
+if ($VoiceBackend -eq 'windows') {
+  Add-Type -AssemblyName System.Speech
+  $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
+  $speaker.Rate = 1
+  $speaker.Volume = 100
+}
+
+function Invoke-JarvisVoice {
+  param([string]$Text)
+
+  switch ($VoiceBackend) {
+    'windows' {
+      $speaker.Speak($Text)
+      return
+    }
+    'elevenlabs' {
+      if (-not $env:ELEVENLABS_API_KEY) {
+        throw 'ELEVENLABS_API_KEY nao encontrada no ambiente.'
+      }
+      if ($ElevenVoiceId) {
+        $env:ELEVENLABS_VOICE_ID = $ElevenVoiceId
+      }
+      $Text | python "$PSScriptRoot\falar_11.py"
+      return
+    }
+    'kokoro' {
+      $env:KOKORO_VOICE = $KokoroVoice
+      $env:KOKORO_SPEED = [string]$KokoroSpeed
+      $pythonForKokoro = if (Test-Path $KokoroPython) { $KokoroPython } else { 'python' }
+      $kokoroOutput = $Text | & $pythonForKokoro "$PSScriptRoot\falar_kokoro.py"
+      $wavPath = $kokoroOutput | Where-Object { $_ -match '\.wav$' } | Select-Object -Last 1
+      if ($wavPath) {
+        $wavPath = $wavPath.Trim()
+      }
+      if ($LASTEXITCODE -ne 0 -or -not $wavPath) {
+        throw 'Kokoro nao conseguiu gerar audio. Confira Python, pacote kokoro e dependencias.'
+      }
+      $player = New-Object System.Media.SoundPlayer $wavPath
+      $player.PlaySync()
+      return
+    }
+  }
+}
 
 $inputWav = Join-Path $env:TEMP 'jarvis-in.wav'
 
@@ -53,5 +98,5 @@ while ($true) {
     --permission-mode acceptEdits `
     --allowedTools Read,Write,Edit,Glob,Grep,LS) -join "`n"
   Write-Host "jarvis: $answer"
-  $speaker.Speak($answer)
+  Invoke-JarvisVoice -Text $answer
 }

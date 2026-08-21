@@ -13,7 +13,7 @@ client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
 audio = client.text_to_speech.convert(
     text=text,
     voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb"),
-    model_id="eleven_multilingual_v2",
+    model_id=os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
     output_format="mp3_44100_128",
 )
 play(audio)
