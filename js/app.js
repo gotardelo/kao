@@ -169,6 +169,37 @@
     el.classList.toggle('show', !!msg);
   }
 
+  function bindNeuroMotion() {
+    var reduzMovimento = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduzMovimento) return;
+
+    var root = document.documentElement;
+    var body = document.body;
+    var ultimoPonteiro = 0;
+
+    document.addEventListener('pointermove', function (evento) {
+      var agora = Date.now();
+      if (agora - ultimoPonteiro < 48) return;
+      ultimoPonteiro = agora;
+      root.style.setProperty('--mx', evento.clientX + 'px');
+      root.style.setProperty('--my', evento.clientY + 'px');
+      body.style.setProperty('--mx', evento.clientX + 'px');
+      body.style.setProperty('--my', evento.clientY + 'px');
+    }, { passive: true });
+
+    document.addEventListener('click', function (evento) {
+      var alvo = evento.target.closest('button,a,.card,.experience-card,.shortcut,.linha,.chip,.nav-item,.tab-item');
+      if (!alvo || alvo.disabled) return;
+
+      var pop = document.createElement('span');
+      pop.className = 'neuro-pop';
+      pop.style.left = evento.clientX + 'px';
+      pop.style.top = evento.clientY + 'px';
+      document.body.appendChild(pop);
+      setTimeout(function () { pop.remove(); }, 760);
+    }, { passive: true });
+  }
+
   /* ============================================================
      BOOT
      ============================================================ */
@@ -179,6 +210,7 @@
     bindChat();
     bindCopiloto();
     bindAmbiente();
+    bindNeuroMotion();
     bindSettings();
     bindProfile();
     Wizard.montar();
@@ -548,6 +580,7 @@
 
   function setNav(page) {
     State.page = page;
+    document.body.dataset.page = page;
     $$('.page').forEach(function (p) { p.classList.toggle('is-active', p.id === 'page-' + page); });
     $$('[data-nav]').forEach(function (b) {
       if (b.classList.contains('nav-item') || b.classList.contains('tab-item')) {
@@ -555,7 +588,10 @@
       }
     });
     $('#page-title').textContent = page === 'persona' ? nomeP() : (TITLES[page] || 'TDAHZEI');
-    $('#view-app').classList.remove('drawer-open');
+    var app = $('#view-app');
+    app.classList.remove('drawer-open', 'page-shift');
+    void app.offsetWidth;
+    app.classList.add('page-shift');
     if (page === 'dashboard') renderDashboard();
     if (page === 'vida') renderVida();
     if (page === 'persona') renderPersona();

@@ -14,9 +14,25 @@
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/persona.css">
 <link rel="stylesheet" href="css/vida.css">
+<link rel="stylesheet" href="css/neuro.css">
 <title>TDAHZEI · Copiloto</title>
 </head>
-<body>
+<body class="neurofx">
+
+<div class="neuro-stage" aria-hidden="true">
+  <div class="neuro-grid"></div>
+  <div class="neuro-scan"></div>
+  <div class="neuro-ribbon r1"></div>
+  <div class="neuro-ribbon r2"></div>
+  <div class="neuro-ribbon r3"></div>
+  <div class="neuro-glyphs">
+    <span>agora</span><span>1 passo</span><span>volta</span><span>foco</span>
+  </div>
+  <svg class="neuro-scribble" viewBox="0 0 900 520" preserveAspectRatio="none" focusable="false">
+    <path d="M14 420 C140 300 110 92 260 130 S430 472 585 316 706 54 884 100" />
+    <path d="M40 150 C176 92 232 246 360 214 S505 52 624 160 746 354 868 270" />
+  </svg>
+</div>
 
 <!-- ============ SPLASH ============ -->
 <div id="splash" class="splash">
@@ -141,6 +157,7 @@
     <header class="topbar">
       <button class="icon-btn only-mobile" data-open-drawer aria-label="Abrir menu"><i data-ico="menu"></i></button>
       <h2 id="page-title">Painel</h2>
+      <div class="focus-radar" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
       <div class="spacer"></div>
       <button class="icon-btn ambient-btn" id="btn-ambiente" type="button" aria-pressed="false" aria-label="Ativar paisagem sonora" title="Ativar paisagem sonora">
         <i data-ico="sound"></i>
