@@ -234,6 +234,10 @@
     }
   }
 
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', function () { carregarMicrofones(false); });
+  }
+
   function showAuth() {
     $('#view-app').classList.add('hidden');
     $('#view-auth').classList.remove('hidden');
@@ -270,6 +274,7 @@
     renderConvList();
     renderDashboard();
     atualizarAvisoDeLimiteApi();
+    carregarMicrofones(false);
 
     // Primeiro acesso: criar o personagem antes de qualquer outra coisa.
     if (!State.perfil.onboarded) {
@@ -1046,6 +1051,189 @@
     $('#btn-mic').hidden = !Persona.Ditado.disponivel();
     $('#input').placeholder = 'Fala com ' + nomeP() + '…';
     atualizarAgenteUI(Voz.estado(), '');
+  }
+
+  function micDeviceKey() {
+    return 'kao:mic-device:' + (State.user ? State.user.id : 'local');
+  }
+
+  function micDeviceId() {
+    try { return localStorage.getItem(micDeviceKey()) || ''; }
+    catch (_) { return ''; }
+  }
+
+  function salvarMicDeviceId(id) {
+    try {
+      if (id) localStorage.setItem(micDeviceKey(), id);
+      else localStorage.removeItem(micDeviceKey());
+    } catch (_) {}
+  }
+
+  function vozSensibilidade() {
+    return Math.max(40, Math.min(100, Number(State.config && State.config.vozSensibilidade) || 86));
+  }
+
+  function audioDoAgente(extra) {
+    var audio = Object.assign({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1
+    }, extra || {});
+    var deviceId = micDeviceId();
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    return { audio: audio };
+  }
+
+  function getUserMediaAgente(extra) {
+    return navigator.mediaDevices.getUserMedia(audioDoAgente(extra)).catch(function (erro) {
+      var nome = erro && erro.name;
+      if (micDeviceId() && (nome === 'OverconstrainedError' || nome === 'NotFoundError')) {
+        throw new Error('O microfone escolhido nao foi encontrado neste aparelho. Atualize a lista em Meu perfil.');
+      }
+      throw erro;
+    });
+  }
+
+  function parametrosDeVoz() {
+    var s = vozSensibilidade();
+    var t = (s - 40) / 60;
+    return {
+      vadThreshold: Math.max(0.18, Math.min(0.42, 0.42 - t * 0.24)),
+      vadSilence: Math.max(0.9, Math.min(1.65, 1.65 - t * 0.45)),
+      minSpeechMs: Math.round(Math.max(90, 220 - t * 100)),
+      minSilenceMs: Math.round(Math.max(240, 460 - t * 160)),
+      loteSilencioMs: Math.round(1500 + (1 - t) * 650),
+      limiarMin: 0.0012 + (1 - t) * 0.0028,
+      limiarMultiplicador: 1.45 + (1 - t) * 1.65
+    };
+  }
+
+  function preencherMicrofones(devices) {
+    var select = $('#cfg-mic-device');
+    if (!select) return;
+    var atual = micDeviceId();
+    var entradas = (devices || []).filter(function (d) { return d.kind === 'audioinput'; });
+    select.innerHTML = '<option value="">Microfone padrao do sistema</option>';
+    entradas.forEach(function (d, i) {
+      var opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || ('Microfone ' + (i + 1));
+      select.appendChild(opt);
+    });
+    if (atual && !entradas.some(function (d) { return d.deviceId === atual; })) {
+      var salvo = document.createElement('option');
+      salvo.value = atual;
+      salvo.textContent = 'Microfone salvo neste aparelho';
+      select.appendChild(salvo);
+    }
+    select.value = atual;
+    var hint = $('#mic-device-hint');
+    if (hint) {
+      hint.textContent = entradas.length
+        ? 'Escolha o microfone certo e use Testar sinal para confirmar.'
+        : 'Clique em Atualizar e libere o microfone para ver os nomes dos dispositivos.';
+    }
+  }
+
+  function carregarMicrofones(pedirPermissao) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      preencherMicrofones([]);
+      return Promise.resolve([]);
+    }
+    var liberar = pedirPermissao
+      ? navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          stream.getTracks().forEach(function (track) { track.stop(); });
+        })
+      : Promise.resolve();
+    return liberar.catch(function () {}).then(function () {
+      return navigator.mediaDevices.enumerateDevices();
+    }).then(function (devices) {
+      preencherMicrofones(devices);
+      return devices;
+    });
+  }
+
+  function renderVoiceProfileControls() {
+    var select = $('#cfg-mic-device');
+    var range = $('#cfg-voz-sensibilidade');
+    var label = $('#cfg-voz-sensibilidade-label');
+    var interrupt = $('#cfg-voz-interrupt');
+    if (select) select.value = micDeviceId();
+    if (range) range.value = String(vozSensibilidade());
+    if (label) label.textContent = vozSensibilidade() + '%';
+    if (interrupt) interrupt.checked = State.config.vozInterromper !== false;
+  }
+
+  function salvarVoiceProfileControls() {
+    var select = $('#cfg-mic-device');
+    var range = $('#cfg-voz-sensibilidade');
+    var interrupt = $('#cfg-voz-interrupt');
+    if (select) salvarMicDeviceId(select.value || '');
+    State.config = Store.Config.set(State.user.id, {
+      vozSensibilidade: range ? Math.max(40, Math.min(100, Number(range.value) || 86)) : vozSensibilidade(),
+      vozInterromper: interrupt ? interrupt.checked : true
+    });
+    renderVoiceProfileControls();
+    if (State.agente.ligado) {
+      if (agenteNavegadorAtivo()) {
+        var session = State.agente.navegador;
+        pararTranscricaoRealtime(session);
+        pararCapturaNeural(session, false);
+        pararDetectorDeInterrupcao(session);
+        setTimeout(iniciarEscutaDoNavegador, 120);
+      } else if (Voz.ativo()) {
+        State.agente.parandoDeProposito = true;
+        Voz.encerrar();
+        setTimeout(function () { if (State.agente.ligado) conectarVoz(false); }, 400);
+      }
+    }
+  }
+
+  function testarMicrofonePerfil() {
+    var out = $('#mic-test-result');
+    if (!out || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    out.className = 'test-result show';
+    out.textContent = 'Abrindo o microfone escolhido...';
+    getUserMediaAgente().then(function (stream) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        throw new Error('Este navegador nao permite medir o sinal do microfone.');
+      }
+      var ctx = new AC();
+      var fonte = ctx.createMediaStreamSource(stream);
+      var analisador = ctx.createAnalyser();
+      analisador.fftSize = 1024;
+      fonte.connect(analisador);
+      var dados = new Uint8Array(analisador.fftSize);
+      var pico = 0;
+      var inicio = Date.now();
+      function medir(resolve) {
+        analisador.getByteTimeDomainData(dados);
+        var soma = 0;
+        for (var i = 0; i < dados.length; i++) {
+          var valor = (dados[i] - 128) / 128;
+          soma += valor * valor;
+        }
+        pico = Math.max(pico, Math.sqrt(soma / dados.length));
+        if (Date.now() - inicio < 1800) requestAnimationFrame(function () { medir(resolve); });
+        else resolve();
+      }
+      return new Promise(medir).then(function () {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        ctx.close().catch(function () {});
+        var pct = Math.round(Math.min(1, pico * 14) * 100);
+        out.className = 'test-result show ' + (pct > 8 ? 'ok' : 'bad');
+        out.textContent = pct > 8
+          ? 'Sinal captado: ' + pct + '%. Esse microfone esta chegando.'
+          : 'Sinal muito baixo. Aumente a sensibilidade, aproxime o microfone ou escolha outro dispositivo.';
+        carregarMicrofones(false);
+      });
+    }).catch(function (erro) {
+      out.className = 'test-result show bad';
+      out.textContent = (erro && erro.message) || 'Nao consegui testar esse microfone.';
+    });
   }
 
   function nearBottom() {
@@ -1854,7 +2042,7 @@
   /** Pequena guarda contra o fim do audio do agente voltar pelo microfone. */
   function retomarEscutaComCalma(session) {
     if (!session || !session.ativo || session.mudo || session.ocupado) return;
-    var espera = 420;
+    var espera = State.config.vozInterromper === false ? 220 : 80;
     session.escutaLiberadaEm = Date.now() + espera;
     if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
     session.retomadaTimer = setTimeout(function () {
@@ -1863,15 +2051,106 @@
     }, espera);
   }
 
+  function pararDetectorDeInterrupcao(session) {
+    var detector = session && session.interruptor;
+    if (!detector) return;
+    detector.parando = true;
+    if (detector.quadro) cancelAnimationFrame(detector.quadro);
+    if (detector.contexto) detector.contexto.close().catch(function () {});
+    if (detector.stream) detector.stream.getTracks().forEach(function (track) { track.stop(); });
+    if (session.interruptor === detector) session.interruptor = null;
+  }
+
+  function interromperFalaDoNavegador(session) {
+    if (!session || !session.ativo) return;
+    pararDetectorDeInterrupcao(session);
+    if (session.filaFala) session.filaFala.cancelar();
+    if (session.falaAbort) {
+      try { session.falaAbort.abort(); } catch (_) {}
+      session.falaAbort = null;
+    }
+    if (session.audio) {
+      try { session.audio.pause(); session.audio.src = ''; } catch (_) {}
+      session.audio = null;
+    }
+    if (session.audioUrl) {
+      URL.revokeObjectURL(session.audioUrl);
+      session.audioUrl = null;
+    }
+    Persona.Voice.calar();
+    if (State.running) State.running.abort();
+    session.ocupado = false;
+    session.ouvindo = false;
+    session.ultimaFalaEm = Date.now();
+    atualizarAgenteUI('ligado', 'te ouvindo');
+    setTimeout(iniciarEscutaDoNavegador, 80);
+  }
+
+  function iniciarDetectorDeInterrupcao(session) {
+    if (!session || !session.ativo || session.mudo || State.config.vozInterromper === false || session.interruptor) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) return;
+
+    getUserMediaAgente().then(function (stream) {
+      if (!session.ativo || session.mudo || State.config.vozInterromper === false) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return;
+      }
+      var contexto = new (window.AudioContext || window.webkitAudioContext)();
+      var fonte = contexto.createMediaStreamSource(stream);
+      var analisador = contexto.createAnalyser();
+      analisador.fftSize = 1024;
+      fonte.connect(analisador);
+      var dados = new Uint8Array(analisador.fftSize);
+      var voz = parametrosDeVoz();
+      var detector = {
+        stream: stream,
+        contexto: contexto,
+        analisador: analisador,
+        quadro: 0,
+        inicio: Date.now(),
+        acimaDesde: 0,
+        parando: false,
+        limiar: Math.max(0.006, voz.limiarMin * 4.4)
+      };
+      session.interruptor = detector;
+      contexto.resume().catch(function () {});
+
+      function loop() {
+        if (!session.ativo || session.mudo || session.interruptor !== detector || detector.parando) return;
+        analisador.getByteTimeDomainData(dados);
+        var soma = 0;
+        for (var i = 0; i < dados.length; i++) {
+          var valor = (dados[i] - 128) / 128;
+          soma += valor * valor;
+        }
+        var volume = Math.sqrt(soma / dados.length);
+        var agora = Date.now();
+        if (agora - detector.inicio > 450 && volume > detector.limiar) {
+          if (!detector.acimaDesde) detector.acimaDesde = agora;
+          if (agora - detector.acimaDesde > 180) {
+            interromperFalaDoNavegador(session);
+            return;
+          }
+        } else if (volume <= detector.limiar * 0.72) {
+          detector.acimaDesde = 0;
+        }
+        detector.quadro = requestAnimationFrame(loop);
+      }
+      loop();
+    }).catch(function () {});
+  }
+
   function falarDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo) return;
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
+    iniciarDetectorDeInterrupcao(session);
     if (window.Ambiente) Ambiente.reduzir(true);
     atualizarAgenteUI('ligado', 'preparando resposta em voz');
     function continuar(saiuAudio) {
       if (!session.ativo) return;
+      pararDetectorDeInterrupcao(session);
       if (window.Ambiente) Ambiente.reduzir(true);
       if (saiuAudio === false && !session.avisoVoz) {
         session.avisoVoz = true;
@@ -2076,6 +2355,7 @@
       if (!session.ativo || cancelada) return;
       session.ouvindo = false;
       session.ultimaFalaEm = Date.now();
+      iniciarDetectorDeInterrupcao(session);
       if (window.Ambiente) Ambiente.reduzir(true);
       atualizarAgenteUI('ligado', 'respondendo');
     }
@@ -2085,6 +2365,7 @@
       if (!fila.length) {
         if (!respostaTerminou) return;
         if (session.filaFala === api) session.filaFala = null;
+        pararDetectorDeInterrupcao(session);
         session.ocupado = false;
         session.ultimaFalaEm = Date.now();
         if (window.Ambiente) Ambiente.reduzir(true);
@@ -2126,6 +2407,7 @@
       pendente = '';
       if (session.filaFala === api) session.filaFala = null;
       if (session.falaAbort) session.falaAbort.abort();
+      pararDetectorDeInterrupcao(session);
     }
 
     return api;
@@ -2134,6 +2416,12 @@
   function enviarFalaDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo || !texto) return;
+    if (State.running) {
+      State.running.abort();
+      setTimeout(function () { enviarFalaDoNavegador(texto); }, 160);
+      return;
+    }
+    pararDetectorDeInterrupcao(session);
     session.ocupado = true;
     session.ultimaFalaEm = Date.now();
     vozMensagem('user', texto);
@@ -2288,6 +2576,11 @@
     if (!fala) return;
     realtime.concluido = true;
     pararTranscricaoRealtime(session);
+    if (State.running) {
+      State.running.abort();
+      setTimeout(function () { enviarFalaDoNavegador(fala); }, 160);
+      return;
+    }
     vozMensagem('user', fala);
     session.ocupado = true;
     session.ultimaFalaEm = Date.now();
@@ -2316,9 +2609,7 @@
 
     pedirTokenDeTranscricao().then(function (token) {
       if (!session.ativo || session.mudo || session.ocupado) { session.realtimeAbrindo = false; return; }
-      return navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-      }).then(function (stream) {
+      return getUserMediaAgente({ channelCount: 1 }).then(function (stream) {
         if (!session.ativo || session.mudo || session.ocupado) {
           session.realtimeAbrindo = false;
           stream.getTracks().forEach(function (track) { track.stop(); });
@@ -2330,10 +2621,11 @@
         endpoint.searchParams.set('audio_format', 'pcm_16000');
         endpoint.searchParams.set('language_code', 'pt');
         endpoint.searchParams.set('commit_strategy', 'vad');
-        endpoint.searchParams.set('vad_silence_threshold_secs', '0.72');
-        endpoint.searchParams.set('vad_threshold', '0.32');
-        endpoint.searchParams.set('min_speech_duration_ms', '180');
-        endpoint.searchParams.set('min_silence_duration_ms', '220');
+        var voz = parametrosDeVoz();
+        endpoint.searchParams.set('vad_silence_threshold_secs', String(voz.vadSilence.toFixed(2)));
+        endpoint.searchParams.set('vad_threshold', String(voz.vadThreshold.toFixed(2)));
+        endpoint.searchParams.set('min_speech_duration_ms', String(voz.minSpeechMs));
+        endpoint.searchParams.set('min_silence_duration_ms', String(voz.minSilenceMs));
         endpoint.searchParams.set('filter_background_audio', 'true');
 
         var contexto = new (window.AudioContext || window.webkitAudioContext)();
@@ -2443,9 +2735,7 @@
     if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
     session.ouvindo = false;
     atualizarAgenteUI('conectando', 'abrindo microfone natural');
-    navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    }).then(function (stream) {
+    getUserMediaAgente().then(function (stream) {
       if (!session.ativo || session.mudo || session.ocupado) {
         stream.getTracks().forEach(function (track) { track.stop(); });
         return;
@@ -2460,11 +2750,12 @@
       var analisador = contexto.createAnalyser();
       analisador.fftSize = 1024;
       fonte.connect(analisador);
+      var voz = parametrosDeVoz();
       var captura = {
         stream: stream, recorder: recorder, contexto: contexto, analisador: analisador,
         partes: [], detectouFala: false, ultimoSom: Date.now(), inicio: Date.now(),
         parando: false, enviar: false, quadro: 0, ruido: 0, amostrasRuido: 0,
-        limiar: 0.003, pico: 0, avisouSemSinal: false
+        limiar: voz.limiarMin, pico: 0, avisouSemSinal: false, voz: voz
       };
       session.captura = captura;
       recorder.ondataavailable = function (evento) {
@@ -2523,7 +2814,7 @@
           captura.ruido += volume;
           captura.amostrasRuido++;
           if (captura.amostrasRuido > 8) {
-            captura.limiar = Math.max(0.002, Math.min(0.012, (captura.ruido / captura.amostrasRuido) * 3.2));
+            captura.limiar = Math.max(captura.voz.limiarMin, Math.min(0.012, (captura.ruido / captura.amostrasRuido) * captura.voz.limiarMultiplicador));
           }
         }
         if (volume > captura.limiar) {
@@ -2534,9 +2825,9 @@
           captura.avisouSemSinal = true;
           atualizarAgenteUI('ligado', 'checando sinal do microfone');
         }
-        if ((!captura.detectouFala && agora - captura.inicio > 8000) ||
-            (captura.detectouFala && agora - captura.ultimoSom > 1650) ||
-            agora - captura.inicio > 30000) {
+        if ((!captura.detectouFala && agora - captura.inicio > 10000) ||
+            (captura.detectouFala && agora - captura.ultimoSom > captura.voz.loteSilencioMs) ||
+            agora - captura.inicio > 45000) {
           // A transcricao e a fonte de verdade. Nunca descarte uma fala so por volume baixo.
           pararCapturaNeural(session, true);
           return;
@@ -2551,7 +2842,7 @@
       var bloqueado = erro && (erro.name === 'NotAllowedError' || erro.name === 'SecurityError');
       var mensagem = bloqueado
         ? 'O microfone esta bloqueado. Libere no cadeado da barra de endereco.'
-        : 'Nao consegui abrir o microfone para a transcricao natural.';
+        : ((erro && erro.message) || 'Nao consegui abrir o microfone para a transcricao natural.');
       session.ativo = false;
       State.agente.ligado = false;
       mostrarDiagnostico(mensagem);
@@ -2623,9 +2914,7 @@
   }
 
   function confirmarMicrofoneDoNavegador(session) {
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    }).then(function (stream) {
+    return getUserMediaAgente().then(function (stream) {
       var temAudio = stream.getAudioTracks().some(function (track) { return track.readyState === 'live'; });
       stream.getTracks().forEach(function (track) { track.stop(); });
       if (!temAudio) throw new Error('Nenhum microfone ativo foi encontrado.');
@@ -2694,6 +2983,7 @@
     if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
     if (session.filaFala) session.filaFala.cancelar();
     if (session.falaAbort) session.falaAbort.abort();
+    pararDetectorDeInterrupcao(session);
     pararTranscricaoRealtime(session);
     pararCapturaNeural(session, false);
     if (session.audio) { try { session.audio.pause(); } catch (_) {} }
@@ -2770,6 +3060,8 @@
       tools: State.config.ferramentas === false ? [] : Ferramentas.paraRealtime(),
       saudacao: comSaudacao !== false,
       saudacaoTexto: saudacaoDoAgente(),
+      micDeviceId: micDeviceId(),
+      sensibilidade: vozSensibilidade(),
       safetyId: 'kao-' + State.user.id
     }, {
       onEstado: function (estado, detalhe) {
@@ -3122,6 +3414,7 @@
     updateModelHint();
     renderCtxInfo();
     atualizarMic();
+    renderVoiceProfileControls();
   }
 
   function setKeyStatus(status) {
@@ -3501,6 +3794,7 @@
     var f = $('#form-profile');
     f.name.value = u.name;
     f.email.value = u.email;
+    renderVoiceProfileControls();
   }
 
   function resetarConta() {
@@ -3579,6 +3873,37 @@
     });
 
     $('#btn-reset-account').addEventListener('click', resetarConta);
+
+    var micSelect = $('#cfg-mic-device');
+    var micRange = $('#cfg-voz-sensibilidade');
+    var micLabel = $('#cfg-voz-sensibilidade-label');
+    var refresh = $('#btn-refresh-mics');
+    var saveVoice = $('#btn-save-voice-profile');
+    var testMic = $('#btn-test-mic');
+
+    if (micRange && micLabel) {
+      micRange.addEventListener('input', function () { micLabel.textContent = micRange.value + '%'; });
+    }
+    if (micSelect) {
+      micSelect.addEventListener('change', function () {
+        salvarMicDeviceId(micSelect.value || '');
+      });
+    }
+    if (refresh) {
+      refresh.addEventListener('click', function () {
+        refresh.disabled = true;
+        carregarMicrofones(true).then(function () {
+          toast('Lista de microfones atualizada.', 'ok');
+        }).then(function () { refresh.disabled = false; });
+      });
+    }
+    if (saveVoice) {
+      saveVoice.addEventListener('click', function () {
+        salvarVoiceProfileControls();
+        toast('Preferencias de voz salvas.', 'ok');
+      });
+    }
+    if (testMic) testMic.addEventListener('click', testarMicrofonePerfil);
   }
 
   document.addEventListener('DOMContentLoaded', boot);

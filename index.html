@@ -514,6 +514,34 @@
         <div class="perfil-social" id="perfil-social"></div>
         <div class="card" id="card-avatar"></div>
 
+        <div class="card voice-profile-card">
+          <div class="card-head">
+            <h4>Microfone do agente</h4>
+            <button class="btn btn-ghost btn-sm" id="btn-refresh-mics" type="button">Atualizar</button>
+          </div>
+          <label class="field">
+            <span>Dispositivo de entrada</span>
+            <select id="cfg-mic-device">
+              <option value="">Microfone padrao do sistema</option>
+            </select>
+            <small class="hint" id="mic-device-hint">Se aparecer so "microfone", clique em Atualizar e libere o acesso.</small>
+          </label>
+          <label class="field">
+            <span>Sensibilidade do agente: <b id="cfg-voz-sensibilidade-label">86%</b></span>
+            <input type="range" id="cfg-voz-sensibilidade" min="40" max="100" step="1" value="86">
+            <small class="hint">Mais alto entende fala baixa e microfone distante; mais baixo ignora ruido do ambiente.</small>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cfg-voz-interrupt" checked>
+            <span>Deixar minha voz interromper a fala do agente</span>
+          </label>
+          <div class="row-btns">
+            <button class="btn btn-primary" id="btn-save-voice-profile" type="button"><i data-ico="check"></i> Salvar voz</button>
+            <button class="btn btn-ghost" id="btn-test-mic" type="button"><i data-ico="mic"></i> Testar sinal</button>
+          </div>
+          <p class="test-result" id="mic-test-result"></p>
+        </div>
+
         <div class="card">
           <div class="card-head"><h4>Dados da conta</h4></div>
           <form id="form-profile" class="form">

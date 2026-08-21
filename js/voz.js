@@ -389,16 +389,24 @@
     try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
   }
 
-  function abrirMicrofone() {
+  function abrirMicrofone(opts) {
+    opts = opts || {};
+    var audio = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1
+    };
+    if (opts.micDeviceId) audio.deviceId = { exact: opts.micDeviceId };
     anotar('microfone', 'pedindo acesso');
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    }).catch(function (e) {
+    return navigator.mediaDevices.getUserMedia({ audio: audio }).catch(function (e) {
       var nome = e && e.name;
       var msg, fatal = true;
       if (nome === 'NotAllowedError' || nome === 'SecurityError') {
         msg = 'O microfone está bloqueado. Clique no cadeado da barra de endereço, ' +
               'libere o microfone para este site e ative o agente de novo.';
+      } else if (opts.micDeviceId && (nome === 'NotFoundError' || nome === 'OverconstrainedError')) {
+        msg = 'O microfone escolhido nao foi encontrado neste aparelho. Atualize a lista em Meu perfil.';
       } else if (nome === 'NotFoundError' || nome === 'OverconstrainedError') {
         msg = 'Nenhum microfone encontrado neste aparelho.';
       } else if (nome === 'NotReadableError') {
@@ -450,7 +458,7 @@
       encerrar();
     }, TIMEOUT_CONEXAO);
 
-    return abrirMicrofone().then(function (stream) {
+    return abrirMicrofone(opts).then(function (stream) {
       if (expirou) { pararStream(stream); return false; }
       S.mic = stream;
       medirStream(stream, 'voce');
