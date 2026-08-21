@@ -19,6 +19,27 @@ function modelId(value: unknown) {
   return model;
 }
 
+function numericSetting(value: unknown, fallback: number, min: number, max: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function booleanSetting(value: unknown, fallback: boolean) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function voiceSettings(value: unknown) {
+  const src = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    stability: numericSetting(src.stability, 0.48, 0, 1),
+    similarity_boost: numericSetting(src.similarityBoost ?? src.similarity_boost, 0.75, 0, 1),
+    style: numericSetting(src.style, 0.12, 0, 1),
+    use_speaker_boost: booleanSetting(src.speakerBoost ?? src.use_speaker_boost, true),
+    speed: numericSetting(src.speed, 1, 0.7, 1.2),
+  };
+}
+
 async function upstreamError(response: Response) {
   const body = await response.json().catch(() => ({})) as { detail?: { message?: string }; error?: { message?: string } };
   return body.detail?.message || body.error?.message || response.statusText || 'A sintese da ElevenLabs falhou.';
@@ -41,8 +62,7 @@ export async function POST(request: Request) {
     const payload: Record<string, unknown> = {
       text,
       model_id: model,
-      // The official defaults favor a stable, natural delivery over maximum speed.
-      voice_settings: { stability: 0.48, similarity_boost: 0.75, style: 0, use_speaker_boost: true, speed: 1 },
+      voice_settings: voiceSettings(body.voiceSettings),
       apply_text_normalization: 'auto',
     };
 

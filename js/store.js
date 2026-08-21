@@ -449,6 +449,11 @@
     vozRealtime: 'marin',
     elevenLabsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
     elevenLabsModel: 'eleven_turbo_v2_5',
+    elevenLabsStability: 48,
+    elevenLabsSimilarity: 75,
+    elevenLabsStyle: 12,
+    elevenLabsSpeed: 100,
+    elevenLabsSpeakerBoost: true,
     ambienteAtivo: false,
     ambienteVolume: 22,
     agenteAtivo: false,       // o microfone só abre quando VOCÊ mandar

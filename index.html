@@ -371,9 +371,9 @@
             <small class="hint">O agente funciona com GPT ou Claude. Para a fala neural mais natural, ele usa uma chave OpenAI salva neste dispositivo, mesmo que o texto venha do Claude.</small>
           </label>
           <label class="field">
-            <span>Chave da ElevenLabs para voz natural</span>
+            <span>Chave da VoiceLab / ElevenLabs para voz natural</span>
             <div class="input-wrap">
-              <input type="password" id="elevenlabs-key" placeholder="Cole sua chave da ElevenLabs" autocomplete="off" spellcheck="false">
+              <input type="password" id="elevenlabs-key" placeholder="Cole sua chave da VoiceLab / ElevenLabs" autocomplete="off" spellcheck="false">
               <button type="button" class="eye" data-toggle-pass aria-label="Mostrar chave"><i data-ico="eye"></i></button>
             </div>
             <small class="hint">Opcional. O Claude continua sendo o cerebro; a ElevenLabs so transcreve sua fala e responde com uma voz natural.</small>
@@ -399,9 +399,44 @@
             </select>
             <small class="hint">Turbo e o equilibrio para conversa. Flash reduz o tempo de resposta, mas pode perder naturalidade.</small>
           </label>
+          <div class="voice-shaper" aria-label="Modelagem da voz natural">
+            <div class="mini-head">
+              <div>
+                <b>Modelar a voz do agente</b>
+                <small>Esses controles mudam a entrega da voz pronta sem trocar o cerebro do agente.</small>
+              </div>
+            </div>
+            <div class="voice-shaper-grid">
+              <label class="field">
+                <span>Estabilidade: <b id="cfg-elevenlabs-stability-label">48%</b></span>
+                <input type="range" id="cfg-elevenlabs-stability" min="0" max="100" step="1" value="48">
+                <small class="hint">Mais alto fica constante; mais baixo fica mais vivo.</small>
+              </label>
+              <label class="field">
+                <span>Semelhanca da voz: <b id="cfg-elevenlabs-similarity-label">75%</b></span>
+                <input type="range" id="cfg-elevenlabs-similarity" min="0" max="100" step="1" value="75">
+                <small class="hint">Mantem o timbre da voz escolhida.</small>
+              </label>
+              <label class="field">
+                <span>Expressividade: <b id="cfg-elevenlabs-style-label">12%</b></span>
+                <input type="range" id="cfg-elevenlabs-style" min="0" max="100" step="1" value="12">
+                <small class="hint">Sobe para uma fala mais emocional e menos plana.</small>
+              </label>
+              <label class="field">
+                <span>Velocidade: <b id="cfg-elevenlabs-speed-label">100%</b></span>
+                <input type="range" id="cfg-elevenlabs-speed" min="70" max="120" step="1" value="100">
+                <small class="hint">Ajusta o ritmo sem mudar a personalidade.</small>
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="cfg-elevenlabs-boost" checked>
+              <span>Reforcar clareza e presenca da voz</span>
+            </label>
+          </div>
           <datalist id="elevenlabs-voices"></datalist>
           <div class="row-btns">
             <button class="btn btn-ghost" id="btn-save-elevenlabs-key" type="button"><i data-ico="check"></i> Salvar voz natural</button>
+            <button class="btn btn-ghost" id="btn-refresh-elevenlabs-voices" type="button">Atualizar vozes</button>
             <button class="btn btn-ghost" id="btn-test-elevenlabs-voice" type="button"><i data-ico="sound"></i> Testar voz</button>
             <button class="btn btn-ghost" id="btn-clear-elevenlabs-key" type="button">Remover chave de voz</button>
           </div>

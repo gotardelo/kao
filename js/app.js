@@ -2305,7 +2305,8 @@
         apiKey: State.elevenLabsKey,
         text: Persona.Voice.limpar(texto),
         voiceId: State.config.elevenLabsVoiceId,
-        modelId: State.config.elevenLabsModel || 'eleven_turbo_v2_5'
+        modelId: State.config.elevenLabsModel || 'eleven_turbo_v2_5',
+        voiceSettings: parametrosElevenLabs()
       }),
       signal: controller.signal
     }).then(function (res) {
@@ -3417,6 +3418,7 @@
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
     aplicarVozElevenLabs(c.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE);
     if ($('#cfg-elevenlabs-model')) $('#cfg-elevenlabs-model').value = c.elevenLabsModel || 'eleven_turbo_v2_5';
+    renderModelagemElevenLabs();
     if ($('#cfg-ambiente-volume')) $('#cfg-ambiente-volume').value = String(volumeAmbiente());
     if ($('#cfg-ambiente-volume-label')) $('#cfg-ambiente-volume-label').textContent = volumeAmbiente() + '%';
     if ($('#cfg-voz-ocioso')) $('#cfg-voz-ocioso').value = String(c.vozOciosoMin || 0);
@@ -3506,6 +3508,62 @@
       select.appendChild(opt);
     }
     select.value = id;
+  }
+
+  function numeroLimitado(valor, fallback, min, max) {
+    var n = Number(valor);
+    if (!isFinite(n)) n = fallback;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function valorModelagemElevenLabs(id, fallback, min, max) {
+    var el = $('#' + id);
+    if (el) return numeroLimitado(el.value, fallback, min, max);
+    return numeroLimitado(fallback, fallback, min, max);
+  }
+
+  function atualizarLabelModelagemElevenLabs(id, valor) {
+    var label = $('#' + id + '-label');
+    if (label) label.textContent = Math.round(valor) + '%';
+  }
+
+  function renderModelagemElevenLabs() {
+    var c = State.config || {};
+    var valores = {
+      stability: numeroLimitado(c.elevenLabsStability, 48, 0, 100),
+      similarity: numeroLimitado(c.elevenLabsSimilarity, 75, 0, 100),
+      style: numeroLimitado(c.elevenLabsStyle, 12, 0, 100),
+      speed: numeroLimitado(c.elevenLabsSpeed, 100, 70, 120)
+    };
+    Object.keys(valores).forEach(function (nome) {
+      var input = $('#cfg-elevenlabs-' + nome);
+      if (input) input.value = String(valores[nome]);
+      atualizarLabelModelagemElevenLabs('cfg-elevenlabs-' + nome, valores[nome]);
+    });
+    var boost = $('#cfg-elevenlabs-boost');
+    if (boost) boost.checked = c.elevenLabsSpeakerBoost !== false;
+  }
+
+  function modelagemElevenLabsAtual() {
+    var c = State.config || {};
+    return {
+      stability: valorModelagemElevenLabs('cfg-elevenlabs-stability', numeroLimitado(c.elevenLabsStability, 48, 0, 100), 0, 100),
+      similarity: valorModelagemElevenLabs('cfg-elevenlabs-similarity', numeroLimitado(c.elevenLabsSimilarity, 75, 0, 100), 0, 100),
+      style: valorModelagemElevenLabs('cfg-elevenlabs-style', numeroLimitado(c.elevenLabsStyle, 12, 0, 100), 0, 100),
+      speed: valorModelagemElevenLabs('cfg-elevenlabs-speed', numeroLimitado(c.elevenLabsSpeed, 100, 70, 120), 70, 120),
+      speakerBoost: $('#cfg-elevenlabs-boost') ? $('#cfg-elevenlabs-boost').checked : !(c.elevenLabsSpeakerBoost === false)
+    };
+  }
+
+  function parametrosElevenLabs() {
+    var m = modelagemElevenLabsAtual();
+    return {
+      stability: m.stability / 100,
+      similarityBoost: m.similarity / 100,
+      style: m.style / 100,
+      speed: m.speed / 100,
+      speakerBoost: m.speakerBoost
+    };
   }
 
   function scoreVozElevenLabs(voice) {
@@ -3662,7 +3720,8 @@
         apiKey: key,
         text: 'Oi. Agora estou usando uma voz natural para conversar com voce em tempo real.',
         voiceId: voiceId,
-        modelId: ($('#cfg-elevenlabs-model') && $('#cfg-elevenlabs-model').value) || 'eleven_turbo_v2_5'
+        modelId: ($('#cfg-elevenlabs-model') && $('#cfg-elevenlabs-model').value) || 'eleven_turbo_v2_5',
+        voiceSettings: parametrosElevenLabs()
       })
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (body) {
@@ -3819,9 +3878,15 @@
       }).then(function (voiceId) {
         State.elevenLabsKey = key;
         limparAvisoDeLimiteApi('elevenlabs');
+        var modelagem = modelagemElevenLabsAtual();
         State.config = Store.Config.set(State.user.id, {
           elevenLabsVoiceId: voiceId || DEFAULT_ELEVENLABS_VOICE,
-          elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5'
+          elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5',
+          elevenLabsStability: modelagem.stability,
+          elevenLabsSimilarity: modelagem.similarity,
+          elevenLabsStyle: modelagem.style,
+          elevenLabsSpeed: modelagem.speed,
+          elevenLabsSpeakerBoost: modelagem.speakerBoost
         });
         aplicarVozElevenLabs(State.config.elevenLabsVoiceId);
         renderElevenLabsKeyUI();
@@ -3852,6 +3917,7 @@
     var elevenSelect = $('#cfg-elevenlabs-voice-select');
     var elevenManual = $('#cfg-elevenlabs-voice');
     var elevenTest = $('#btn-test-elevenlabs-voice');
+    var elevenRefresh = $('#btn-refresh-elevenlabs-voices');
     if (elevenSelect) {
       elevenSelect.addEventListener('change', function () {
         aplicarVozElevenLabs(elevenSelect.value || '');
@@ -3862,6 +3928,37 @@
         aplicarVozElevenLabs(elevenManual.value.trim());
       });
     }
+    ['stability', 'similarity', 'style', 'speed'].forEach(function (nome) {
+      var input = $('#cfg-elevenlabs-' + nome);
+      if (!input) return;
+      input.addEventListener('input', function () {
+        atualizarLabelModelagemElevenLabs('cfg-elevenlabs-' + nome, input.value);
+      });
+    });
+    if (elevenRefresh) {
+      elevenRefresh.addEventListener('click', function () {
+        var key = String(($('#elevenlabs-key') && $('#elevenlabs-key').value) || State.elevenLabsKey || '').trim();
+        var out = $('#elevenlabs-result');
+        if (key.length < 12) {
+          if (out) {
+            out.className = 'test-result show bad';
+            out.textContent = 'Cole a chave da VoiceLab / ElevenLabs antes de atualizar as vozes.';
+          }
+          return;
+        }
+        elevenRefresh.disabled = true;
+        carregarVozesElevenLabs(key, false).then(function () {
+          toast('Biblioteca de vozes atualizada.', 'ok');
+        }).catch(function (erro) {
+          if (out) {
+            out.className = 'test-result show bad';
+            out.textContent = (erro && erro.message) || 'Nao consegui atualizar as vozes.';
+          }
+        }).then(function () {
+          elevenRefresh.disabled = false;
+        });
+      });
+    }
     if (elevenTest) elevenTest.addEventListener('click', testarVozNaturalElevenLabs);
 
     $('#cfg-system-custom').addEventListener('change', function (e) {
@@ -3870,6 +3967,7 @@
 
     $('#btn-save-cfg').addEventListener('click', function () {
       var custom = $('#cfg-system-custom').checked;
+      var modelagem = modelagemElevenLabsAtual();
       State.config = Store.Config.set(State.user.id, {
         provider: $('#cfg-provider').value,
         model: $('#cfg-model').value,
@@ -3882,6 +3980,11 @@
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',
         elevenLabsVoiceId: vozElevenLabsAtual() || DEFAULT_ELEVENLABS_VOICE,
         elevenLabsModel: $('#cfg-elevenlabs-model').value || 'eleven_turbo_v2_5',
+        elevenLabsStability: modelagem.stability,
+        elevenLabsSimilarity: modelagem.similarity,
+        elevenLabsStyle: modelagem.style,
+        elevenLabsSpeed: modelagem.speed,
+        elevenLabsSpeakerBoost: modelagem.speakerBoost,
         ambienteVolume: Math.max(0, Math.min(45, Number($('#cfg-ambiente-volume').value) || 0)),
         vozOciosoMin: parseInt($('#cfg-voz-ocioso').value, 10) || 0,
         agenteAtivo: $('#cfg-agente-auto').checked,
