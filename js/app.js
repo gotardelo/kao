@@ -34,7 +34,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-  var APP_VERSION = '2026.08.21.26';
+  var APP_VERSION = '2026.08.21.27';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -2469,16 +2469,20 @@
       var url = URL.createObjectURL(blob);
       var audio = new Audio(url);
       audio.autoplay = true;
+      audio.muted = false;
       audio.preload = 'auto';
+      audio.volume = 1;
       audio.setAttribute('playsinline', '');
       audio.style.display = 'none';
       if (document.body) document.body.appendChild(audio);
       session.audio = audio;
       session.audioUrl = url;
       var terminou = false;
+      var limite = setTimeout(function () { finalizar(true); }, 65000);
       function finalizar(saiuAudio) {
         if (terminou) return;
         terminou = true;
+        if (limite) clearTimeout(limite);
         if (session.audio === audio) session.audio = null;
         if (session.audioUrl === url) session.audioUrl = null;
         if (audio.parentNode) audio.parentNode.removeChild(audio);
@@ -2490,6 +2494,30 @@
       audio.onerror = function () { finalizar(false); };
       audio.play().catch(function () { finalizar(false); });
     });
+  }
+
+  function tocarAudioCompativel(resposta, session, controller) {
+    return resposta.blob().then(function (blob) {
+      if (!blob || !blob.size) return false;
+      return tocarBlobDeAudio(blob, session, controller);
+    });
+  }
+
+  function fallbackFalaNativa(texto, session, aoTerminar) {
+    if (!Persona.Voice.disponivel() || session.falaNavegadorIndisponivel) {
+      aoTerminar(false);
+      return;
+    }
+    var falou = Persona.Voice.falar(texto, State.persona.voz, function (ok) {
+      if (!ok) session.falaNavegadorIndisponivel = true;
+      aoTerminar(ok);
+    }, function (estado) {
+      if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
+    });
+    if (!falou) {
+      session.falaNavegadorIndisponivel = true;
+      aoTerminar(false);
+    }
   }
 
   /** Toca os bytes assim que chegam; o caminho antigo so inicia depois do MP3 inteiro. */
@@ -2589,14 +2617,19 @@
 
   function falarComElevenLabs(texto, session, aoTerminar) {
     var controller = new AbortController();
+    var textoLimpo = Persona.Voice.limpar(texto);
     var timeout = setTimeout(function () {
       if (session.ativo && session.falaAbort === controller) controller.abort();
-    }, 16000);
+    }, Math.max(45000, Math.min(90000, textoLimpo.length * 180)));
     function limparTimeout() {
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
       }
+    }
+    if (!textoLimpo) {
+      aoTerminar(false);
+      return;
     }
     session.falaAbort = controller;
     fetch('/api/speech/synthesize', {
@@ -2604,7 +2637,7 @@
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         apiKey: chaveElevenLabsAtual(),
-        text: Persona.Voice.limpar(texto),
+        text: textoLimpo,
         voiceId: State.config.elevenLabsVoiceId,
         modelId: State.config.elevenLabsModel || 'eleven_multilingual_v2',
         voiceSettings: parametrosElevenLabs()
@@ -2618,13 +2651,17 @@
         }
         throw erro;
       });
-      return tocarFluxoDeAudio(res, session, controller);
+      return tocarAudioCompativel(res, session, controller);
     }).then(function (saiuAudio) {
       limparTimeout();
       if (!session.ativo || session.falaAbort !== controller) return;
       session.falaAbort = null;
       limparAvisoDeLimiteApi('elevenlabs');
-      aoTerminar(saiuAudio);
+      if (saiuAudio) {
+        aoTerminar(true);
+        return;
+      }
+      fallbackFalaNativa(textoLimpo, session, aoTerminar);
     }).catch(function (erro) {
       limparTimeout();
       if (!session.ativo) return;
@@ -2636,10 +2673,10 @@
         session.avisoVoz = true;
         toast(erro && erro.name === 'AbortError'
           ? 'A voz natural demorou demais. Voltei para a escuta.'
-          : ((erro && erro.message) || 'A voz natural nao respondeu.'), 'bad');
+          : ((erro && erro.message) || 'A voz natural nao respondeu.') + ' Vou tentar a voz do navegador.', 'bad');
       }
       if (session.falaAbort === controller) session.falaAbort = null;
-      aoTerminar(false);
+      fallbackFalaNativa(textoLimpo, session, aoTerminar);
     });
   }
 

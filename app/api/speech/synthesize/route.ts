@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(voiceId)) throw new Error('O ID da voz natural e invalido.');
     const model = modelId(body.modelId);
 
-    const endpoint = new URL(ELEVENLABS_TTS + '/' + encodeURIComponent(voiceId) + '/stream');
+    const endpoint = new URL(ELEVENLABS_TTS + '/' + encodeURIComponent(voiceId));
     endpoint.searchParams.set('output_format', 'mp3_44100_128');
 
     const payload: Record<string, unknown> = {
@@ -70,9 +70,6 @@ export async function POST(request: Request) {
       voice_settings: voiceSettings(body.voiceSettings),
       apply_text_normalization: 'auto',
     };
-
-    // Multilingual v2 detects Portuguese from the text and does not accept language_code.
-    if (model !== 'eleven_multilingual_v2') payload.language_code = 'pt';
 
     const upstream = await fetch(endpoint, {
       method: 'POST',
