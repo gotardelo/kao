@@ -1,0 +1,5 @@
+financeiro/
+pessoal/
+*.key
+.env
+.env.*

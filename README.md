@@ -9,6 +9,43 @@ atributos, nome, avatar e voz — e ele carrega o seu contexto em toda conversa.
 
 ---
 
+## JarvisOS do PDF
+
+O guia `jarvisos-assistente-pessoal.pdf` foi aplicado em duas camadas:
+
+- **No app online:** a aba **JarvisOS** traz `00-Inbox`, `Diario`, `contexto.md`,
+  `pendencias.md`, `.claudeignore` e as skills Caixa, Plano, Fechamento,
+  Tendencias e Metricas, tudo sincronizado entre celular e desktop.
+- **No ambiente local:** este repo agora tem `.claude/skills/` com as cinco skills
+  do JarvisOS, `jarvisos/templates/Vault/` com a estrutura Obsidian/markdown e
+  `jarvisos/scripts/` com o loop PowerShell `jarvis.ps1`.
+
+Nesta maquina tambem foram instalados:
+
+- Poppler / `pdftotext` via Winget.
+- `whisper-cli.exe` em `~/tools/whisper.cpp/Release/`.
+- `ggml-base.bin` em `~/models/`, modelo sem `.en` para portugues.
+- Vault local em `~/Vault`.
+- Skills globais em `~/.claude/skills/{caixa,fechamento,plano,metricas,tendencias}`.
+
+Rodar o loop local:
+
+```powershell
+ffmpeg -list_devices true -f dshow -i dummy
+powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\jarvis.ps1 -Mic "NOME DO MICROFONE"
+```
+
+Rodar a caixa sem voz:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\jarvisos\scripts\caixa.ps1
+```
+
+O PDF era Mac-first (`brew`, `say`, `launchd`). No Windows, o equivalente aplicado foi
+`ffmpeg` com `dshow`, voz SAPI e scripts PowerShell.
+
+---
+
 ## Como rodar
 
 ```bash
