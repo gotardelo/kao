@@ -48,7 +48,10 @@ while ($true) {
   }
 
   Write-Host "voce: $question"
-  $answer = (claude -p $question --add-dir $Vault) -join "`n"
+  $answer = (claude -p $question `
+    --add-dir $Vault `
+    --permission-mode acceptEdits `
+    --allowedTools Read,Write,Edit,Glob,Grep,LS) -join "`n"
   Write-Host "jarvis: $answer"
   $speaker.Speak($answer)
 }

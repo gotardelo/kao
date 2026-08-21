@@ -12,4 +12,7 @@ if (-not (Test-Path $Vault)) {
   & "$PSScriptRoot\setup-vault.ps1" -Vault $Vault
 }
 
-claude -p "Rode a skill caixa agora." --add-dir $Vault
+claude -p "Rode a skill caixa agora." `
+  --add-dir $Vault `
+  --permission-mode acceptEdits `
+  --allowedTools Read,Write,Edit,Glob,Grep,LS
