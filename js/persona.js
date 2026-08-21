@@ -333,11 +333,13 @@
       var iniciou = false;
       var terminou = false;
       var vigia = null;
+      var limite = null;
 
       function terminar(saiuAudio) {
         if (terminou) return;
         terminou = true;
         if (vigia) clearTimeout(vigia);
+        if (limite) clearTimeout(limite);
         if (aoTerminar) aoTerminar(saiuAudio);
       }
 
@@ -362,15 +364,22 @@
 
       // Chrome can accept speak() without ever starting audible output.
       vigia = setTimeout(function () {
-        if (!iniciou && !speechSynthesis.speaking) {
+        if (!iniciou) {
+          try { speechSynthesis.cancel(); } catch (_) {}
           if (aoEstado) aoEstado('error', 'speech-not-started');
           terminar(false);
         }
-      }, 1800);
+      }, 2400);
+      limite = setTimeout(function () {
+        if (!terminou) {
+          try { speechSynthesis.cancel(); } catch (_) {}
+          terminar(!!iniciou);
+        }
+      }, Math.max(8000, Math.min(45000, limpo.length * 95)));
       return true;
     },
 
-    calar: function () { if (Voice.disponivel()) speechSynthesis.cancel(); },
+    calar: function () { if (Voice.disponivel()) { try { speechSynthesis.cancel(); } catch (_) {} } },
     falando: function () { return Voice.disponivel() && speechSynthesis.speaking; }
   };
 

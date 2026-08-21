@@ -33,7 +33,7 @@
   };
 
   var DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
-  var APP_VERSION = '2026.08.21.24';
+  var APP_VERSION = '2026.08.21.25';
   var ElevenLabsVoices = [];
 
   /** Nome do personagem, com fallback enquanto ele não existe. */
@@ -2238,7 +2238,18 @@
   }
 
   function usarVozNatural() {
-    return !!String(State.elevenLabsKey || '').trim();
+    return chaveElevenLabsAtual().length >= 12;
+  }
+
+  function chaveElevenLabsAtual() {
+    var input = $('#elevenlabs-key');
+    return String((input && input.value && input.value.trim()) || State.elevenLabsKey || '').trim();
+  }
+
+  function falaNativaBloqueiaEscuta(session) {
+    return !usarVozNatural() &&
+      !(session && session.falaNavegadorIndisponivel) &&
+      Persona.Voice.falando();
   }
 
   function suporteAgenteNavegador() {
@@ -2399,7 +2410,8 @@
         session.avisoVoz = true;
         toast(usarVozNatural()
           ? 'A voz natural nao iniciou. Teste a chave e a voz em Chave & Modelo.'
-          : 'A voz do navegador nao iniciou. Verifique se a aba nao esta muda e tente ligar o agente de novo.', 'bad');
+          : 'A fala do navegador falhou, mas eu continuei te ouvindo. Salve a chave da ElevenLabs para usar voz natural.', 'bad');
+        if (!usarVozNatural()) session.falaNavegadorIndisponivel = true;
       }
       session.ocupado = false;
       session.ultimaFalaEm = Date.now();
@@ -2407,6 +2419,10 @@
     }
     if (usarVozNatural()) {
       falarComElevenLabs(texto, session, continuar);
+      return;
+    }
+    if (session.falaNavegadorIndisponivel) {
+      continuar(false);
       return;
     }
     var falou = Persona.Voice.falar(texto, State.persona.voz, continuar, function (estado) {
@@ -2421,6 +2437,11 @@
       if (!session.ativo || session.falaAbort !== controller) { resolve(false); return; }
       var url = URL.createObjectURL(blob);
       var audio = new Audio(url);
+      audio.autoplay = true;
+      audio.preload = 'auto';
+      audio.setAttribute('playsinline', '');
+      audio.style.display = 'none';
+      if (document.body) document.body.appendChild(audio);
       session.audio = audio;
       session.audioUrl = url;
       var terminou = false;
@@ -2429,6 +2450,7 @@
         terminou = true;
         if (session.audio === audio) session.audio = null;
         if (session.audioUrl === url) session.audioUrl = null;
+        if (audio.parentNode) audio.parentNode.removeChild(audio);
         URL.revokeObjectURL(url);
         resolve(saiuAudio);
       }
@@ -2450,6 +2472,11 @@
       var media = new MediaSource();
       var url = URL.createObjectURL(media);
       var audio = new Audio(url);
+      audio.autoplay = true;
+      audio.preload = 'auto';
+      audio.setAttribute('playsinline', '');
+      audio.style.display = 'none';
+      if (document.body) document.body.appendChild(audio);
       var reader = resposta.body.getReader();
       var sourceBuffer = null;
       var fila = [];
@@ -2466,6 +2493,7 @@
         try { reader.cancel(); } catch (_) {}
         if (session.audio === audio) session.audio = null;
         if (session.audioUrl === url) session.audioUrl = null;
+        if (audio.parentNode) audio.parentNode.removeChild(audio);
         URL.revokeObjectURL(url);
         if (erro) reject(erro);
         else resolve(saiuAudio);
@@ -2544,7 +2572,7 @@
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        apiKey: State.elevenLabsKey,
+        apiKey: chaveElevenLabsAtual(),
         text: Persona.Voice.limpar(texto),
         voiceId: State.config.elevenLabsVoiceId,
         modelId: State.config.elevenLabsModel || 'eleven_multilingual_v2',
@@ -2728,7 +2756,7 @@
   function transcreverAudio(blob) {
     var dados = new FormData();
     dados.append('file', blob, nomeArquivoAudio(blob));
-    dados.append('apiKey', State.elevenLabsKey);
+    dados.append('apiKey', chaveElevenLabsAtual());
     return fetch('/api/speech/transcribe', { method: 'POST', body: dados }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
@@ -2748,7 +2776,7 @@
     return fetch('/api/speech/realtime-token', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ apiKey: State.elevenLabsKey })
+      body: JSON.stringify({ apiKey: chaveElevenLabsAtual() })
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
@@ -2931,7 +2959,7 @@
   /** Scribe recebe PCM continuo e confirma a frase por VAD, sem esperar um arquivo WebM inteiro. */
   function iniciarEscutaNeuralEmTempoReal() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || session.realtime || session.realtimeAbrindo || Persona.Voice.falando()) return;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.realtime || session.realtimeAbrindo || falaNativaBloqueiaEscuta(session)) return;
     if (!window.WebSocket || !(window.AudioContext || window.webkitAudioContext)) {
       usarTranscricaoEmLote(session, new Error('Este navegador nao suporta a transcricao em tempo real.'));
       return;
@@ -3064,14 +3092,14 @@
 
   function iniciarEscutaNeural() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || session.realtime || session.realtimeAbrindo || Persona.Voice.falando()) return;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || session.realtime || session.realtimeAbrindo || falaNativaBloqueiaEscuta(session)) return;
     if (session.realtimeIndisponivel) iniciarEscutaNeuralEmLote();
     else iniciarEscutaNeuralEmTempoReal();
   }
 
   function iniciarEscutaNeuralEmLote() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || Persona.Voice.falando()) return;
+    if (!session || !session.ativo || session.mudo || session.ocupado || session.captura || falaNativaBloqueiaEscuta(session)) return;
     if (!(window.AudioContext || window.webkitAudioContext)) {
       var semAudio = 'Este navegador nao permite processar audio do microfone.';
       mostrarDiagnostico(semAudio);
@@ -3218,7 +3246,7 @@
 
   function iniciarEscutaPorDitado() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    if (!session || !session.ativo || session.mudo || session.ocupado || falaNativaBloqueiaEscuta(session)) return;
     session.ouvindo = false;
     atualizarAgenteUI('conectando', 'abrindo microfone');
     var finalRecebido = false;
@@ -3259,7 +3287,7 @@
 
   function iniciarEscutaDoNavegador() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || Persona.Voice.falando()) return;
+    if (!session || !session.ativo || session.mudo || session.ocupado || falaNativaBloqueiaEscuta(session)) return;
     var espera = (session.escutaLiberadaEm || 0) - Date.now();
     if (espera > 0) {
       if (!session.retomadaTimer) {
