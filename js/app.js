@@ -1238,7 +1238,7 @@
         pararTranscricaoRealtime(session);
         pararCapturaNeural(session, false);
         pararDetectorDeInterrupcao(session);
-        setTimeout(iniciarEscutaDoNavegador, 120);
+        reagendarEscutaDoNavegador(120);
       } else if (Voz.ativo()) {
         State.agente.parandoDeProposito = true;
         Voz.encerrar();
@@ -1509,6 +1509,8 @@
         '# Conversa por voz\n' +
         'Converse como uma pessoa presente, nao como uma central de ajuda. Comece respondendo ou validando o que a pessoa disse em uma frase curta. ' +
         'Fale em blocos de no maximo tres frases e termine com uma pergunta real, uma por vez, para abrir espaco para ela responder. ' +
+        'Traga conteudo seu antes de perguntar: uma leitura do que ela disse, uma hipotese ou um proximo passo concreto. ' +
+        'Pergunta atras de pergunta vira interrogatorio; o que ela precisa e alguem pensando junto. ' +
         'Puxe o proximo assunto apenas quando ele fizer sentido pelo contexto; seja curioso sem virar interrogatorio. ' +
         'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa. ' +
         'Uma pausa curta pode ser pensamento: espere a pessoa concluir antes de responder e nunca trate uma frase incompleta como a vez dela terminada.'
@@ -1569,6 +1571,29 @@
     return { estavel: estavel, volatil: vol.join('\n\n') };
   }
 
+  /* ------------------------------------------------------------
+     Quanto ele pode escrever numa resposta falada
+
+     Falar curto e instrucao de prompt, nao teto de tokens. Com o teto
+     em 360 a frase era cortada no meio; e em modelo com raciocinio o
+     raciocinio consumia o teto inteiro e a resposta voltava VAZIA — que
+     e o "ele nao conversa" e o "ele nao desenvolve ideias". Entao aqui
+     o teto e folgado e o esforco de raciocinio cai, porque conversa
+     falada precisa de resposta rapida, nao de reflexao longa.
+     ------------------------------------------------------------ */
+  var TOKENS_VOZ_MIN = 1600;
+  var TOKENS_VOZ_MAX = 4000;
+
+  function tokensDaResposta(cfg) {
+    if (!agenteNavegadorAtivo()) return cfg.maxTokens;
+    var teto = Number(cfg.maxTokens) || TOKENS_VOZ_MIN;
+    return Math.max(TOKENS_VOZ_MIN, Math.min(teto, TOKENS_VOZ_MAX));
+  }
+
+  function esforcoDaResposta(cfg) {
+    return agenteNavegadorAtivo() ? 'low' : cfg.effort;
+  }
+
   function streamReply() {
     var conv = State.conv;
     var cfg = State.config;
@@ -1620,8 +1645,8 @@
         apiKey: State.apiKey,
         provider: cfg.provider,
         model: cfg.model,
-        effort: cfg.effort,
-        maxTokens: agenteNavegadorAtivo() ? Math.min(Number(cfg.maxTokens) || 360, 360) : cfg.maxTokens,
+        effort: esforcoDaResposta(cfg),
+        maxTokens: tokensDaResposta(cfg),
         showThinking: cfg.showThinking,
         systemEstavel: sys.estavel,
         systemVolatil: sys.volatil,
@@ -1694,7 +1719,7 @@
           if (agenteNavegadorAtivo()) {
             if (filaDeFala) filaDeFala.cancelar();
             State.agente.navegador.ocupado = false;
-            setTimeout(iniciarEscutaDoNavegador, 400);
+            reagendarEscutaDoNavegador(400);
           }
         }
       });
@@ -1750,6 +1775,12 @@
       if (!info.aborted && agenteNavegadorAtivo()) {
         if (filaDeFala) filaDeFala.finalizar(finalText);
         else falarDoNavegador(finalText);
+      } else if (agenteNavegadorAtivo()) {
+        // Interrompido no meio: ele nao fala esta resposta, mas o microfone
+        // TEM que voltar. Sem isso a sessao ficava ligada e surda para sempre.
+        if (filaDeFala) filaDeFala.cancelar();
+        State.agente.navegador.ocupado = false;
+        reagendarEscutaDoNavegador(250);
       } else if (filaDeFala) {
         filaDeFala.cancelar();
       }
@@ -2048,6 +2079,37 @@
   var eqLoop = null;
   var eqBarras = null;
   var eqSuave = [0, 0, 0, 0, 0];
+  var eqDados = null;
+
+  /**
+   * Nivel das barrinhas quando quem esta no ar e o agente do navegador.
+   * Antes elas liam so o medidor da voz da OpenAI e ficavam paradas — e
+   * barra parada e a coisa que mais faz parecer que ele nao esta te ouvindo.
+   */
+  function espectroDoNavegador() {
+    var session = State.agente.navegador;
+    var parado = { quem: 'voce', nivel: 0, valores: null };
+    if (!session || !session.ativo) return parado;
+
+    var analisador = (session.captura && session.captura.analisador) ||
+                     (session.interruptor && session.interruptor.analisador);
+    if (analisador) {
+      if (!eqDados || eqDados.length !== analisador.fftSize) eqDados = new Uint8Array(analisador.fftSize);
+      analisador.getByteTimeDomainData(eqDados);
+      var soma = 0;
+      for (var i = 0; i < eqDados.length; i++) {
+        var v = (eqDados[i] - 128) / 128;
+        soma += v * v;
+      }
+      var rms = Math.min(1, Math.sqrt(soma / eqDados.length) * 6);
+      return { quem: session.ouvindo ? 'voce' : 'ele', nivel: rms, valores: null };
+    }
+
+    // Ditado do navegador nao entrega o audio: pulso vivo enquanto ele age.
+    if (agenteFalandoAgora(session)) return { quem: 'ele', nivel: 0.6, valores: null };
+    if (session.ouvindo) return { quem: 'voce', nivel: 0.34, valores: null };
+    return parado;
+  }
 
   function pintarBarras() {
     if (!eqBarras) {
@@ -2056,7 +2118,7 @@
     }
     if (!eqBarras.length) return;
 
-    var s = Voz.espectro(eqBarras.length);
+    var s = agenteNavegadorAtivo() ? espectroDoNavegador() : Voz.espectro(eqBarras.length);
     var btn = $('#btn-agente');
 
     for (var i = 0; i < eqBarras.length; i++) {
@@ -2066,7 +2128,7 @@
       eqBarras[i].style.transform = 'scaleY(' + (0.16 + Math.min(1, eqSuave[i]) * 0.84).toFixed(3) + ')';
     }
 
-    if (btn && Voz.ligado()) {
+    if (btn && (Voz.ligado() || agenteNavegadorAtivo())) {
       var dele = s.quem === 'ele' && s.nivel > 0.06;
       btn.classList.toggle('falando', dele);
       btn.classList.toggle('on', !dele);
@@ -2076,7 +2138,7 @@
   function ligarBarras() {
     if (eqLoop) return;
     var passo = function () {
-      if (!Voz.ativo()) { eqLoop = null; zerarBarras(); return; }
+      if (!Voz.ativo() && !agenteNavegadorAtivo()) { eqLoop = null; zerarBarras(); return; }
       pintarBarras();
       eqLoop = requestAnimationFrame(passo);
     };
@@ -2334,10 +2396,46 @@
     toast('A fala do navegador falhou agora, mas eu continuei te ouvindo.', 'bad');
   }
 
+  /* O Chrome deixa speechSynthesis.speaking preso em true depois de um
+     cancel(). Confiar so nessa flag era o jeito mais facil de o agente ficar
+     ligado e surdo para sempre — por isso a marca propria session.falandoNativo,
+     que so vive entre o inicio e o fim de uma fala que NOS pedimos. */
   function falaNativaBloqueiaEscuta(session) {
     return !usarVozNatural() &&
       !vozNavegadorIndisponivel(session) &&
+      !!(session && session.falandoNativo) &&
       Persona.Voice.falando();
+  }
+
+  /** True so quando ele esta mesmo produzindo som agora. */
+  function agenteFalandoAgora(session) {
+    if (!session) return false;
+    if (session.audio && !session.audio.paused && !session.audio.ended) return true;
+    if (session.falaAbort || session.filaFala) return true;
+    return !!session.falandoNativo && Persona.Voice.falando();
+  }
+
+  /**
+   * Fala pelo navegador marcando quando a boca esta aberta, e garantindo que
+   * o fim seja avisado uma vez so — mesmo quando o speak() nem chega a sair.
+   */
+  function falarNativoDoNavegador(texto, session, aoTerminar) {
+    var pronto = false;
+    session.falandoNativo = true;
+    function terminar(saiuAudio) {
+      if (pronto) return;
+      pronto = true;
+      session.falandoNativo = false;
+      aoTerminar(!!saiuAudio);
+    }
+    var falou = Persona.Voice.falar(texto, State.persona.voz, terminar, function (estado) {
+      if (!session.ativo) return;
+      if (estado === 'started') {
+        armarDetectorDeInterrupcao(session);
+        atualizarAgenteUI('ligado', 'falando');
+      }
+    });
+    if (!falou) terminar(false);
   }
 
   function suporteAgenteNavegador() {
@@ -2381,6 +2479,42 @@
     } catch (_) {}
   }
 
+  /**
+   * Marca uma nova tentativa de escuta. Existe para que NENHUM caminho possa
+   * simplesmente desistir: agente ligado que para de ouvir e o pior defeito
+   * possivel, porque por fora parece que ele so te ignorou.
+   */
+  function reagendarEscutaDoNavegador(espera) {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo) return;
+    if (session.retomadaTimer) clearTimeout(session.retomadaTimer);
+    session.retomadaTimer = setTimeout(function () {
+      session.retomadaTimer = null;
+      iniciarEscutaDoNavegador();
+    }, Math.max(80, espera || 250));
+  }
+
+  /**
+   * Rede de seguranca do vigia: ligado, calado, sem pensar e sem ouvir e um
+   * estado do qual ele nao saia sozinho. Aqui ele sai.
+   */
+  function garantirEscutaDoNavegador() {
+    var session = State.agente.navegador;
+    if (!session || !session.ativo || session.mudo) return;
+    if (session.ouvindo || session.captura || session.realtime) return;
+    if (session.realtimeAbrindo) {
+      // Abertura que passa de 20s nao vai abrir mais: cai para o modo compativel.
+      if (Date.now() - (session.realtimeAbrindoEm || 0) < 20000) return;
+      usarTranscricaoEmLote(session, new Error('A transcricao em tempo real nao abriu.'));
+      return;
+    }
+    if (Persona.Ditado.ativo() || session.retomadaTimer) return;
+    if (State.running || agenteFalandoAgora(session)) return;
+    session.ocupado = false;
+    session.escutaLiberadaEm = 0;
+    iniciarEscutaDoNavegador();
+  }
+
   /** Pequena guarda contra o fim do audio do agente voltar pelo microfone. */
   function retomarEscutaComCalma(session) {
     if (!session || !session.ativo || session.mudo || session.ocupado) return;
@@ -2405,6 +2539,8 @@
 
   function interromperFalaDoNavegador(session) {
     if (!session || !session.ativo) return;
+    session.vezesInterrompido = (session.vezesInterrompido || 0) + 1;
+    session.falandoNativo = false;
     pararDetectorDeInterrupcao(session);
     if (session.filaFala) session.filaFala.cancelar();
     if (session.falaAbort) {
@@ -2425,8 +2561,12 @@
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
     atualizarAgenteUI('ligado', 'te ouvindo');
-    setTimeout(iniciarEscutaDoNavegador, 80);
+    reagendarEscutaDoNavegador(80);
   }
+
+  /* Tempo de fala dele usado para medir o vazamento do alto-falante no
+     microfone. Precisa ser fala mesmo, nao silencio anterior. */
+  var CALIBRAGEM_INTERRUPCAO_MS = 900;
 
   function iniciarDetectorDeInterrupcao(session) {
     if (!session || !session.ativo || session.mudo || usarVozNatural() || State.config.vozInterromper === false || session.interruptor) return;
@@ -2449,16 +2589,28 @@
         contexto: contexto,
         analisador: analisador,
         quadro: 0,
-        inicio: Date.now(),
+        armadoEm: 0,              // so conta a partir do primeiro som DELE
         acimaDesde: 0,
         parando: false,
-        limiar: Math.max(0.006, voz.limiarMin * 4.4)
+        base: Math.max(0.006, voz.limiarMin * 4.4),
+        limiar: 0,
+        piso: 0,
+        amostrasPiso: 0
       };
       session.interruptor = detector;
       contexto.resume().catch(function () {});
 
       function loop() {
         if (!session.ativo || session.mudo || session.interruptor !== detector || detector.parando) return;
+        detector.quadro = requestAnimationFrame(loop);
+
+        /* Enquanto ele ainda nao comecou a falar de verdade, o microfone so
+           ouve silencio. Calibrar aqui era o defeito: o piso saia perto de
+           zero, a primeira palavra dele passava do limiar e ele se cortava
+           sozinho depois de uma silaba. Agora o relogio so comeca quando o
+           audio dele comeca — quem avisa e armarDetectorDeInterrupcao. */
+        if (!detector.armadoEm) return;
+
         analisador.getByteTimeDomainData(dados);
         var soma = 0;
         for (var i = 0; i < dados.length; i++) {
@@ -2467,24 +2619,61 @@
         }
         var volume = Math.sqrt(soma / dados.length);
         var agora = Date.now();
-        if (agora - detector.inicio > 450 && volume > detector.limiar) {
+
+        // Os primeiros 900ms de fala medem quanto da voz dele volta pelo microfone.
+        if (agora - detector.armadoEm < CALIBRAGEM_INTERRUPCAO_MS) {
+          detector.piso += volume;
+          detector.amostrasPiso++;
+          return;
+        }
+        if (detector.amostrasPiso) {
+          var medio = detector.piso / detector.amostrasPiso;
+          detector.limiar = Math.max(detector.base, medio * 3 + 0.012);
+          detector.amostrasPiso = 0;
+        }
+        if (!detector.limiar) return;
+
+        if (volume > detector.limiar) {
           if (!detector.acimaDesde) detector.acimaDesde = agora;
-          if (agora - detector.acimaDesde > 180) {
+          // Meio segundo bem acima do vazamento: e voce falando, nao o eco dele.
+          if (agora - detector.acimaDesde > 500) {
             interromperFalaDoNavegador(session);
             return;
           }
-        } else if (volume <= detector.limiar * 0.72) {
+        } else if (volume <= detector.limiar * 0.7) {
           detector.acimaDesde = 0;
         }
-        detector.quadro = requestAnimationFrame(loop);
       }
       loop();
     }).catch(function () {});
   }
 
+  /**
+   * Liga o cronometro do detector no instante em que a voz dele comeca a sair.
+   * Sem esse aviso o detector nunca julga nada — que e o comportamento certo
+   * quando a fala nem chegou a acontecer.
+   */
+  function armarDetectorDeInterrupcao(session) {
+    var detector = session && session.interruptor;
+    if (!detector || detector.parando || detector.armadoEm) return;
+    detector.armadoEm = Date.now();
+    detector.piso = 0;
+    detector.amostrasPiso = 0;
+    detector.limiar = 0;
+    detector.acimaDesde = 0;
+  }
+
   function falarDoNavegador(texto) {
     var session = State.agente.navegador;
     if (!session || !session.ativo) return;
+    // Resposta vazia (modelo cortado, so ferramenta) nao e defeito da voz.
+    // Contar isso como falha era o que fazia ele "desistir de falar" do nada.
+    if (!Persona.Voice.limpar(texto)) {
+      session.ocupado = false;
+      session.ultimaFalaEm = Date.now();
+      reagendarEscutaDoNavegador(200);
+      return;
+    }
     session.avisoVoz = false;              // cada resposta pode avisar de novo se falhar
     session.ouvindo = false;
     session.ultimaFalaEm = Date.now();
@@ -2509,11 +2698,7 @@
       continuar(false);
       return;
     }
-    var falou = Persona.Voice.falar(texto, State.persona.voz, continuar, function (estado) {
-      if (!session.ativo) return;
-      if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
-    });
-    if (!falou) continuar();
+    falarNativoDoNavegador(texto, session, continuar);
   }
 
   function tocarBlobDeAudio(blob, session, controller) {
@@ -2542,7 +2727,10 @@
         URL.revokeObjectURL(url);
         resolve(saiuAudio);
       }
-      audio.onplay = function () { atualizarAgenteUI('ligado', 'falando'); };
+      audio.onplay = function () {
+        armarDetectorDeInterrupcao(session);
+        atualizarAgenteUI('ligado', 'falando');
+      };
       audio.onended = function () { finalizar(true); };
       audio.onerror = function () { finalizar(false); };
       audio.play().catch(function () { finalizar(false); });
@@ -2561,17 +2749,11 @@
       aoTerminar(false);
       return;
     }
-    var falou = Persona.Voice.falar(texto, State.persona.voz, function (ok) {
+    falarNativoDoNavegador(texto, session, function (ok) {
       if (ok) limparFalhasVozNavegador(session);
       else registrarFalhaVozNavegador(session);
       aoTerminar(ok);
-    }, function (estado) {
-      if (estado === 'started') atualizarAgenteUI('ligado', 'falando');
     });
-    if (!falou) {
-      registrarFalhaVozNavegador(session);
-      aoTerminar(false);
-    }
   }
 
   /** Toca os bytes assim que chegam; o caminho antigo so inicia depois do MP3 inteiro. */
@@ -3091,14 +3273,23 @@
   }
 
   function usarTranscricaoEmLote(session, erro) {
-    if (!session || !session.ativo || session.mudo || session.ocupado || session.realtimeIndisponivel) return;
-    session.realtimeIndisponivel = true;
+    if (!session || !session.ativo) return;
+    /* Solta a trava ANTES de qualquer saida. Quando isso ficava pendurado —
+       e ficava, sempre que a falha caia com ele ocupado — iniciarEscutaNeural
+       voltava sem fazer nada para sempre: agente ligado e surdo. */
     session.realtimeAbrindo = false;
+    session.realtimeAbrindoEm = 0;
+    if (session.realtimeIndisponivel) return;
+    session.realtimeIndisponivel = true;
     if (erro && !session.avisoTranscricao) {
       session.avisoTranscricao = true;
       mostrarDiagnostico(((erro && erro.message) || 'A transcricao em tempo real falhou.') + ' Usando modo compativel.');
     }
     pararTranscricaoRealtime(session);
+    if (session.mudo || session.ocupado) {
+      reagendarEscutaDoNavegador(400);
+      return;
+    }
     iniciarEscutaNeuralEmLote();
   }
 
@@ -3111,6 +3302,7 @@
       return;
     }
     session.realtimeAbrindo = true;
+    session.realtimeAbrindoEm = Date.now();
     session.ouvindo = false;
     atualizarAgenteUI('conectando', 'abrindo transcricao em tempo real');
 
@@ -3143,6 +3335,7 @@
         };
         session.realtime = realtime;
         session.realtimeAbrindo = false;
+        session.realtimeAbrindoEm = 0;
         var socket = new WebSocket(endpoint.toString());
         realtime.socket = socket;
         realtime.abrirTimer = setTimeout(function () {
@@ -3298,12 +3491,12 @@
         if (session.captura === captura) session.captura = null;
         session.ouvindo = false;
         if (!session.ativo || session.mudo || !captura.enviar) {
-          if (session.ativo && !session.mudo && !session.ocupado) setTimeout(iniciarEscutaDoNavegador, 250);
+          if (session.ativo && !session.mudo && !session.ocupado) reagendarEscutaDoNavegador(250);
           return;
         }
         var audio = wavDeAmostras(captura.partes, captura.sampleRate);
         if (audio.size < 1200 || captura.partes.length < 2) {
-          setTimeout(iniciarEscutaDoNavegador, 250);
+          reagendarEscutaDoNavegador(250);
           return;
         }
         session.ocupado = true;
@@ -3312,17 +3505,31 @@
           if (!session.ativo) return;
           if (!texto) {
             session.ocupado = false;
-            setTimeout(iniciarEscutaDoNavegador, 250);
+            reagendarEscutaDoNavegador(250);
             return;
           }
           enviarFalaDoNavegador(texto);
         }).catch(function (erro) {
           if (!session.ativo) return;
           session.ocupado = false;
+          var mensagem = (erro && erro.message) || 'A transcricao da voz natural nao respondeu.';
+
+          /* Perder a transcricao paga (cota, rede, chave) nao pode custar a
+             conversa inteira. Se o navegador tem ditado proprio, ele assume a
+             escuta e a voz natural continua sendo usada para FALAR. */
+          if (Persona.Ditado.disponivel()) {
+            session.escutaPorDitado = true;
+            if (!session.avisoTranscricao) {
+              session.avisoTranscricao = true;
+              mostrarDiagnostico(mensagem + ' Voltei a te ouvir pelo ditado do navegador.');
+            }
+            reagendarEscutaDoNavegador(300);
+            return;
+          }
+
           session.neuralIndisponivel = true;
           session.ativo = false;
           State.agente.ligado = false;
-          var mensagem = (erro && erro.message) || 'A transcricao da voz natural nao respondeu.';
           mostrarDiagnostico(mensagem);
           atualizarAgenteUI('off', mensagem);
           toast(mensagem, 'bad');
@@ -3390,50 +3597,112 @@
     });
   }
 
+  /**
+   * Quanto silencio fecha a sua vez de falar. O ditado do Chrome marca um
+   * trecho como "final" a cada pausinha, no meio da frase — fechar ali era
+   * o que fazia ele te cortar no meio do raciocinio e responder a um pedaco.
+   * Pausa de TDAH e pensamento, nao fim de frase.
+   */
+  function silencioDeFimDeVez() {
+    var t = (vozSensibilidade() - 40) / 60;      // 0 = paciente, 1 = rapido
+    return Math.round(1550 - t * 450);           // 1550ms .. 1100ms
+  }
+
   function iniciarEscutaPorDitado() {
     var session = State.agente.navegador;
     if (!session || !session.ativo || session.mudo || session.ocupado || falaNativaBloqueiaEscuta(session)) return;
     session.ouvindo = false;
     atualizarAgenteUI('conectando', 'abrindo microfone');
-    var finalRecebido = false;
-    var abriu = Persona.Ditado.iniciar(function (texto, jaFinalizado) {
-      if (session.ativo && texto) vozParcial(texto, 'user');
-      if (session.ativo && jaFinalizado && !finalRecebido) {
-        finalRecebido = true;
+
+    var fechando = null;
+    var encerrado = false;
+    var ultimoTexto = '';
+
+    function cancelarFechamento() {
+      if (fechando) { clearTimeout(fechando); fechando = null; }
+    }
+
+    /** Cada palavra nova adia o fechamento; so o silencio de verdade encerra. */
+    function agendarFechamento(temFinal) {
+      cancelarFechamento();
+      if (encerrado) return;
+      fechando = setTimeout(function () {
+        fechando = null;
+        if (encerrado || !session.ativo || session.mudo) return;
+        encerrado = true;
         session.ouvindo = false;
         atualizarAgenteUI('ligado', 'entendi, pensando');
         Persona.Ditado.parar();
-      }
+      }, temFinal ? silencioDeFimDeVez() : silencioDeFimDeVez() + 700);
+    }
+
+    var abriu = Persona.Ditado.iniciar(function (texto, jaFinalizado) {
+      if (!session.ativo || encerrado) return;
+      if (!texto) return;
+      ultimoTexto = texto;
+      vozParcial(texto, 'user');
+      agendarFechamento(!!String(jaFinalizado || '').trim());
     }, function (texto, erroMsg) {
+      cancelarFechamento();
+      encerrado = true;
       session.ouvindo = false;
       if (!session.ativo || session.mudo) return;
-      var fala = String(texto || '').trim();
+      // Alguns navegadores fecham sem marcar o ultimo trecho como final.
+      // Perder o que voce acabou de dizer e pior do que arriscar um parcial.
+      var fala = String(texto || '').trim() || String(ultimoTexto || '').trim();
       if (fala) {
         enviarFalaDoNavegador(fala);
         return;
       }
-      if (erroMsg && !/ouvi nada/i.test(erroMsg)) toast(erroMsg, 'bad');
-      setTimeout(iniciarEscutaDoNavegador, 250);
+      // Um aviso por motivo, nao um por respiro: o ditado do navegador
+      // tropeca sozinho de vez em quando e a tela virava um mural de erro.
+      if (erroMsg && !/ouvi nada/i.test(erroMsg) && session.ultimoErroDitado !== erroMsg) {
+        session.ultimoErroDitado = erroMsg;
+        toast(erroMsg, 'bad');
+      }
+      reagendarEscutaDoNavegador(300);
     }, function (estado) {
       if (!session.ativo) return;
       if (estado === 'started') {
         session.ouvindo = true;
         atualizarAgenteUI('ligado', 'ouvindo');
       } else if (estado === 'speechstart') {
+        cancelarFechamento();
         atualizarAgenteUI('ligado', 'te ouvindo');
+      } else if (estado === 'speechend') {
+        agendarFechamento(true);
       }
     });
-    if (!abriu) {
-      session.ativo = false;
-      State.agente.ligado = false;
-      atualizarAgenteUI('off', 'nao consegui abrir o microfone');
-      toast('Nao consegui abrir o microfone do navegador.', 'bad');
+    if (abriu) {
+      session.falhasDitado = 0;
+      return;
     }
+
+    /* start() recusado costuma ser o reconhecedor anterior ainda fechando.
+       Desligar o agente por causa disso era o defeito mais cruel: ele sumia
+       no meio da conversa. Tenta de novo algumas vezes antes de desistir. */
+    session.falhasDitado = (session.falhasDitado || 0) + 1;
+    if (session.falhasDitado <= 4) {
+      atualizarAgenteUI('ligado', 'reabrindo o microfone');
+      reagendarEscutaDoNavegador(400 * session.falhasDitado);
+      return;
+    }
+    session.ativo = false;
+    State.agente.ligado = false;
+    var semMic = 'Nao consegui reabrir o microfone do navegador. Recarregue a pagina e ligue o agente de novo.';
+    mostrarDiagnostico(semMic);
+    atualizarAgenteUI('off', 'nao consegui abrir o microfone');
+    toast(semMic, 'bad');
   }
 
   function iniciarEscutaDoNavegador() {
     var session = State.agente.navegador;
-    if (!session || !session.ativo || session.mudo || session.ocupado || falaNativaBloqueiaEscuta(session)) return;
+    if (!session || !session.ativo || session.mudo) return;
+    // Ocupado ou falando nao e motivo para desistir: e motivo para voltar depois.
+    if (session.ocupado || falaNativaBloqueiaEscuta(session)) {
+      reagendarEscutaDoNavegador(350);
+      return;
+    }
     var espera = (session.escutaLiberadaEm || 0) - Date.now();
     if (espera > 0) {
       if (!session.retomadaTimer) {
@@ -3445,7 +3714,7 @@
       return;
     }
     if (window.Ambiente) Ambiente.reduzir(true);
-    if (usarVozNatural()) {
+    if (usarVozNatural() && !session.escutaPorDitado) {
       iniciarEscutaNeural();
       return;
     }
@@ -3493,6 +3762,11 @@
       microfoneConfirmado: false,
       avisoVoz: false,
       falhasVozNavegador: 0,
+      falhasDitado: 0,
+      falandoNativo: false,
+      escutaPorDitado: false,
+      realtimeAbrindoEm: 0,
+      ultimoErroDitado: '',
       escutaLiberadaEm: 0,
       retomadaTimer: null
     };
@@ -3517,6 +3791,7 @@
     var session = State.agente.navegador;
     if (!session) return;
     session.ativo = false;
+    session.falandoNativo = false;
     Persona.Ditado.parar();
     Persona.Voice.calar();
     if (window.Ambiente) Ambiente.reduzir(false);
@@ -3784,6 +4059,9 @@
         toast(nomeP() + ' foi descansar depois de ' + limite + ' min em silêncio. Clique para acordar.');
         return;
       }
+
+      // Rede de seguranca: ligado e surdo nunca pode durar mais que um ciclo.
+      garantirEscutaDoNavegador();
 
       if (Voz.ligado() || agenteNavegadorAtivo()) atualizarAgenteUI('ligado', '');
     }, 10000);

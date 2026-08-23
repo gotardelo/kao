@@ -7,7 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "node --experimental-default-type=commonjs server.js",
+    "start": "node server.cjs",
+    "test": "node tests/ditado.test.cjs && node tests/fala.test.cjs",
     "dev": "vinext dev --hostname 0.0.0.0 --port 5173",
     "build": "node scripts/prepare-sites-public.mjs && vinext build"
   },
