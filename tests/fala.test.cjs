@@ -1,6 +1,8 @@
 /* Testa Persona.Voice.falar com um speechSynthesis falso.
    Foco: o navegador corta a fala no meio sem avisar como erro — chega um
-   "end" limpo. A fala tem que retomar de onde parou, e nunca virar laco. */
+   "end" limpo. A fala tem que retomar de onde parou, e nunca virar laco.
+   Foco 2: texto longo sai em pedacos curtos, porque fala longa o Chrome
+   corta perto dos 15s por conta propria. */
 const fs = require('fs');
 const vm = require('vm');
 
@@ -125,10 +127,35 @@ function motorFala(u, ate, comBordas) {
     }
     ok('frase longa: chegou ao fim', fim === true, 'voltas=' + voltas);
     const dito = ditas.map((u) => u.text.slice(0, 30)).join('');
-    ok('frase longa: nao ficou repetindo o mesmo trecho',
-       new Set(ditas.map((u) => u.text)).size === ditas.length, 'emissoes=' + ditas.length);
+    const emLaco = ditas.some((u, i) => i > 0 && ditas[i - 1].text === u.text);
+    ok('frase longa: nao ficou repetindo o mesmo trecho', !emLaco, 'emissoes=' + ditas.length);
     ok('frase longa: cobriu o texto todo', dito.replace(/\s+/g, '').length >= LONGA.replace(/\s+/g, '').length * 0.9,
        dito.length + ' de ' + LONGA.length);
+  }
+
+  /* ---------- 6. texto longo sai picado, e nao numa fala so ---------- */
+  {
+    const { Voice, ditas } = montarMundo();
+    const LONGA = Array(10).fill(FRASE).join(' ');
+    let fim = null;
+    Voice.falar(LONGA, {}, (ok_) => { fim = ok_; });
+
+    ok('pedacos: a primeira emissao nao leva o texto inteiro',
+       ditas[0].text.length < LONGA.length / 2, ditas[0].text.length + ' de ' + LONGA.length);
+
+    let voltas = 0;
+    while (fim === null && voltas < 40) {
+      const u = ditas[ditas.length - 1];
+      motorFala(u, u.text.length, true);            // motor bem comportado: fala tudo
+      await espera(80);
+      voltas++;
+    }
+    ok('pedacos: chegou ao fim', fim === true, 'voltas=' + voltas);
+    ok('pedacos: cada emissao cabe no limite',
+       ditas.every((u) => u.text.length <= 150), 'maior=' + Math.max(...ditas.map((u) => u.text.length)));
+    ok('pedacos: emendou o texto inteiro, na ordem',
+       ditas.map((u) => u.text).join('').replace(/\s+/g, ' ').trim() === LONGA,
+       JSON.stringify(ditas.map((u) => u.text).join('').slice(0, 160)));
   }
 
   console.log('');

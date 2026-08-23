@@ -467,7 +467,8 @@
     systemMode: 'auto',              // auto = gerado pelo TDAHzeiro | custom = texto livre
     system: '',                      // só usado quando systemMode === 'custom'
     tetoMensalUSD: 0,                // 0 = sem teto; acima disso, bloqueia o envio
-    ferramentas: true                // deixar ele gravar coisas sozinho
+    ferramentas: true,               // deixar ele gravar coisas sozinho
+    catalogoAuto: true               // varrer cada resposta atras do que ele esqueceu de gravar
   };
 
   var Config = {

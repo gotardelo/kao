@@ -1513,7 +1513,9 @@
         'Pergunta atras de pergunta vira interrogatorio; o que ela precisa e alguem pensando junto. ' +
         'Puxe o proximo assunto apenas quando ele fizer sentido pelo contexto; seja curioso sem virar interrogatorio. ' +
         'Nao anuncie que vai ajudar nem descreva seu processo. Use linguagem oral, direta e calorosa. ' +
-        'Uma pausa curta pode ser pensamento: espere a pessoa concluir antes de responder e nunca trate uma frase incompleta como a vez dela terminada.'
+        'Uma pausa curta pode ser pensamento: espere a pessoa concluir antes de responder e nunca trate uma frase incompleta como a vez dela terminada. ' +
+        'Falar pouco nao e gravar pouco: siga chamando as ferramentas de registro no meio da conversa, ' +
+        'sem anunciar e sem sair do assunto. O que voce nao gravar enquanto ela fala, some.'
       );
       partes.push(
         '# JarvisOS\n' +
@@ -1529,6 +1531,16 @@
         'Você grava e consulta coisas de verdade, sem pedir licença. Regras:\n' +
         '- Registre no momento em que a informação aparece na conversa, mesmo de passagem. ' +
         '"Ontem gastei 60 no mercado" é um registrar_gasto, não um comentário.\n' +
+        '- Antes de responder, releia a última fala dela atrás do que precisa virar registro. ' +
+        'Achou, chama a ferramenta nesta mesma resposta: não guarda para depois, não espera ela pedir, não pergunta se pode.\n' +
+        '- Gatilhos, sem exceção:\n' +
+        '  - fato estável sobre ela, a vida, o trabalho, a saúde, a rotina, gostos ou alguém próximo: lembrar_fato\n' +
+        '  - qualquer coisa que ela precise, queira ou tenha combinado fazer, inclusive "preciso", "tenho que", "amanhã eu": criar_pendencia\n' +
+        '  - algo que ela disse que terminou: concluir_pendencia\n' +
+        '  - dinheiro que saiu ou entrou: registrar_gasto ou registrar_receita\n' +
+        '  - ideia, decisão, referência ou contexto solto que ainda não virou tarefa: registrar_no_vault\n' +
+        '- Uma conversa boa rende vários registros. Grave tudo o que apareceu, não só o item mais óbvio, ' +
+        'e volte a gravar nos turnos seguintes.\n' +
         '- Nunca peça para a pessoa preencher formulário nem repetir o que já disse. O atrito de registrar é o que faz sistema de TDAH morrer.\n' +
         '- Pode chamar várias ferramentas de uma vez.\n' +
         '- Depois de registrar, siga a conversa normalmente. Uma menção curta basta ("anotei"), sem relatório do que você fez.\n' +
@@ -1762,6 +1774,9 @@
       renderCtxInfo();
       scrollToEnd();
 
+      // Nada gravado neste turno: releia a conversa antes que ela esfrie.
+      if (!info.aborted && !acoes.length) catalogarConversa(conv, placeholder);
+
       // fala sozinho, se o personagem estiver configurado assim
       var voz = State.persona.voz;
       if (!info.aborted && voz.ativa && voz.auto && Persona.Voice.disponivel() && !agenteNavegadorAtivo()) {
@@ -1791,6 +1806,123 @@
     }
 
     rodar();
+  }
+
+  /* ============================================================
+     CATALOGACAO EM TEMPO REAL
+
+     O modelo esquece de gravar quando a conversa esquenta - ainda mais em
+     modelo economico, e ainda mais no modo voz, onde o proprio prompt pede
+     resposta curta. So que no TDAH o que nao entra na hora nao entra nunca,
+     e a "Minha vida" fica vazia justo nos dias em que mais se conversou.
+     Entao toda resposta que nao gravou nada leva uma segunda passada, curta
+     e invisivel, so para varrer o que ficou de fora.
+     ============================================================ */
+  var FERRAMENTAS_DE_REGISTRO = [
+    'lembrar_fato', 'criar_pendencia', 'concluir_pendencia',
+    'registrar_gasto', 'registrar_receita', 'cadastrar_conta',
+    'marcar_conta_paga', 'registrar_no_vault'
+  ];
+
+  function ferramentasDeRegistro() {
+    return Ferramentas.DEFINICOES.filter(function (t) {
+      return FERRAMENTAS_DE_REGISTRO.indexOf(t.name) > -1;
+    });
+  }
+
+  /** A varredura roda a cada turno, entao vai no modelo mais barato do provedor. */
+  function modeloDaCatalogacao() {
+    var atual = Claude.modelOf(State.config.model);
+    var candidatos = Claude.MODELS.filter(function (m) { return m.provider === atual.provider; });
+    var barato = candidatos.sort(function (a, b) { return a.price.in - b.price.in; })[0];
+    return (barato && barato.price.in <= atual.price.in ? barato : atual).id;
+  }
+
+  /** Costura as etiquetas do que foi gravado na mensagem que ja esta na tela. */
+  function mostrarAcoesNaMensagem(msg, novas) {
+    var el = $('#messages [data-id="' + msg.id + '"]');
+    var content = el && $('.msg-content', el);
+    if (!content) return;
+    var caixa = $('.acoes', content);
+    if (!caixa) {
+      caixa = document.createElement('div');
+      caixa.className = 'acoes';
+      content.insertBefore(caixa, content.firstChild);
+    }
+    caixa.insertAdjacentHTML('beforeend', novas.map(function (a) {
+      return '<span class="acao' + (a.erro ? ' erro' : '') + '">' +
+             Icons.svg(a.erro ? 'x' : 'check', 12) + MD.escape(a.rotulo) + '</span>';
+    }).join(''));
+  }
+
+  function promptDoCatalogador() {
+    return '# Catalogador\n' +
+      'Voce le um pedaco de conversa entre uma pessoa com TDAH e o copiloto dela e grava o que apareceu ' +
+      'ali e ainda nao esta registrado. Voce nao conversa, nao comenta e nao responde: so chama ferramenta.\n' +
+      '- Fato estavel sobre ela, a vida, o trabalho, a saude, a rotina, gostos ou pessoas proximas: lembrar_fato.\n' +
+      '- Qualquer coisa que ela precise, queira ou tenha combinado fazer: criar_pendencia.\n' +
+      '- Algo que ela disse que terminou: concluir_pendencia.\n' +
+      '- Dinheiro que saiu ou entrou: registrar_gasto ou registrar_receita.\n' +
+      '- Conta recorrente que ela mencionou: cadastrar_conta. Conta que ela pagou: marcar_conta_paga.\n' +
+      '- Ideia, decisao, referencia ou contexto solto que ainda nao virou tarefa: registrar_no_vault.\n' +
+      '- Grave so o que a PESSOA disse ou confirmou. Sugestao do copiloto que ela nao aceitou nao vira registro.\n' +
+      '- Nao repita nada que ja esteja na lista abaixo, nem com outras palavras. Nao invente o que nao foi dito.\n' +
+      '- Se nao ha nada novo, nao chame ferramenta nenhuma e responda apenas: nada.\n\n' +
+      '# Ja registrado\n' + (Memoria.resumoParaPrompt(State.user.id) || '(nada ainda)');
+  }
+
+  /**
+   * Rele o ultimo par de falas e grava o que passou batido.
+   * Roda solto, sem travar a conversa: se falhar, falha em silencio.
+   */
+  function catalogarConversa(conv, resposta) {
+    if (!State.user || !State.apiKey) return;
+    if (State.config.ferramentas === false || State.config.catalogoAuto === false) return;
+    if (Store.Usage.teto(State.user.id, State.config.tetoMensalUSD).estourou) return;
+
+    var msgs = (conv && conv.messages) || [];
+    var fala = null;
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user' && msgs[i].content) { fala = msgs[i]; break; }
+    }
+    var dito = fala ? String(fala.content).trim() : '';
+    if (dito.length < 12) return;              // "oi", "ok", "pode ser": nao ha o que catalogar
+
+    var modelo = modeloDaCatalogacao();
+    var trecho = 'PESSOA: ' + dito.slice(0, 4000) + '\n\n' +
+                 'COPILOTO: ' + String(resposta.content || '').trim().slice(0, 4000);
+
+    Claude.stream({
+      apiKey: State.apiKey,
+      model: modelo,
+      effort: 'low',
+      maxTokens: 1200,
+      system: promptDoCatalogador(),
+      messages: [{ role: 'user', content: trecho }],
+      tools: ferramentasDeRegistro()
+    }, {
+      onDone: function (info) {
+        var us = info.usage || {};
+        Store.Usage.add(State.user.id, us.input_tokens || 0, us.output_tokens || 0, modelo,
+                        { lidos: us.cache_read_input_tokens || 0, escritos: 0 });
+
+        var chamadas = (info.ferramentas || []).filter(function (t) {
+          return FERRAMENTAS_DE_REGISTRO.indexOf(t.name) > -1;
+        });
+        if (!chamadas.length) return;
+
+        var novas = chamadas.map(function (t) {
+          var r = Ferramentas.executar(State.user.id, t.name, t.input);
+          return { nome: t.name, rotulo: Ferramentas.rotulo(t.name, t.input), erro: r.erro };
+        });
+        resposta.acoes = (resposta.acoes || []).concat(novas);
+        Store.Convs.save(State.user.id, conv);
+        mostrarAcoesNaMensagem(resposta, novas);
+        atualizarTudoDepoisDeFerramenta();
+        premiarPorAcoes(novas);
+      },
+      onError: function () { /* catalogar e bonus: falhar aqui nao pode atrapalhar a conversa */ }
+    }).promise.catch(function () { /* idem */ });
   }
 
   /** Depois de uma ferramenta gravar algo, as telas precisam refletir. */
@@ -4226,6 +4358,7 @@
     $('#cfg-system').value = c.system || '';
     $('#cfg-teto').value = c.tetoMensalUSD || '';
     $('#cfg-ferramentas').checked = c.ferramentas !== false;
+    if ($('#cfg-catalogo')) $('#cfg-catalogo').checked = c.catalogoAuto !== false;
     if ($('#cfg-voz-realtime')) $('#cfg-voz-realtime').value = c.vozRealtime || 'marin';
     if ($('#cfg-voz-modelo')) $('#cfg-voz-modelo').value = c.vozModelo || 'gpt-realtime-2.1';
     aplicarVozElevenLabs(c.elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE);
@@ -4836,6 +4969,7 @@
         maxTokens: parseInt($('#cfg-maxtokens').value, 10),
         showThinking: $('#cfg-thinking').checked,
         ferramentas: $('#cfg-ferramentas').checked,
+        catalogoAuto: $('#cfg-catalogo') ? $('#cfg-catalogo').checked : true,
         tetoMensalUSD: Math.max(0, parseFloat($('#cfg-teto').value) || 0),
         vozRealtime: $('#cfg-voz-realtime').value || 'marin',
         vozModelo: $('#cfg-voz-modelo').value || 'gpt-realtime-2.1',

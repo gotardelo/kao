@@ -277,6 +277,10 @@
      achar que falou mais do que repetir palavra na cara da pessoa. */
   var MS_POR_LETRA_FALADA = 58;
   var MAX_RETOMADAS_FALA = 12;
+  /* Tamanho maximo de cada pedaco falado. Curto de proposito: o Chrome corta
+     qualquer fala longa perto dos 15s, entao a unica defesa que sempre funciona
+     e nunca pedir uma fala longa. ~150 letras dao uma ou duas frases. */
+  var MAX_PEDACO = 150;
 
   var Voice = {
     disponivel: function () { return typeof speechSynthesis !== 'undefined'; },
@@ -308,6 +312,12 @@
     },
 
     /** A voz configurada, ou a melhor voz de português disponível. */
+    remota: function (v) {
+      if (!v) return false;
+      if (v.localService === false) return true;
+      return /^google\b/i.test(v.name || '');
+    },
+
     escolher: function (cfg) {
       cfg = cfg || {};
       var vozes = Voice.listar();
@@ -315,9 +325,13 @@
         var achou = vozes.filter(function (v) { return v.voiceURI === cfg.uri; })[0];
         if (achou) return achou;
       }
-      return vozes.filter(function (v) {
-        return /pt[-_]?BR/i.test(v.lang) && /(natural|microsoft|google)/i.test(v.name);
-      })[0] || vozes.filter(function (v) { return /pt[-_]?BR/i.test(v.lang); })[0] || null;
+      var br = vozes.filter(function (v) { return /pt[-_]?BR/i.test(v.lang); });
+      var pt = br.length ? br : vozes.filter(function (v) { return /^pt/i.test(v.lang); });
+      var locais = pt.filter(function (v) { return !Voice.remota(v); });
+      var pool = locais.length ? locais : pt;
+      return pool.filter(function (v) { return /(natural|neural)/i.test(v.name); })[0] ||
+             pool.filter(function (v) { return /microsoft/i.test(v.name); })[0] ||
+             pool[0] || null;
     },
 
     /** Tira markdown e emoji para a fala não ficar esquisita. */
@@ -376,8 +390,12 @@
       }
 
       /** O Chrome corta a fala perto dos 15s; pausar e retomar zera esse relogio. */
-      function manterVivo() {
+      function manterVivo(letras) {
         if (pulso) clearInterval(pulso);
+        /* Em voz remota o truque e veneno: pause/resume mata a fala em silencio.
+           E com pedaco curto ele quase nunca faz falta. */
+        if (Voice.remota(escolhida)) return;
+        if ((letras * MS_POR_LETRA_FALADA) / taxa < 11000) return;
         pulso = setInterval(function () {
           if (terminou) { clearInterval(pulso); pulso = null; return; }
           if (!speechSynthesis.speaking || speechSynthesis.paused) return;
@@ -404,9 +422,43 @@
         return espaco > 0 ? espaco + 1 : indice;
       }
 
+      /**
+       * Onde este pedaco deve acabar: no ultimo fim de frase que couber, senao
+       * numa virgula, senao na ultima palavra inteira. Cortar em ponto final e
+       * o que faz a emenda soar como respiro, e nao como falha.
+       */
+      function fimDoPedaco(inicio) {
+        if (limpo.length - inicio <= MAX_PEDACO) return limpo.length;
+        var janela = limpo.slice(inicio, inicio + MAX_PEDACO);
+        var minimo = Math.floor(MAX_PEDACO * 0.4);
+        var corte = -1, m, fimDeFrase = /[.!?…]+(?=\s)/g;
+        while ((m = fimDeFrase.exec(janela))) corte = m.index + m[0].length;
+        if (corte < minimo) {
+          var pausa = Math.max(janela.lastIndexOf(', '), janela.lastIndexOf('; '), janela.lastIndexOf(': '));
+          if (pausa >= minimo) corte = pausa + 1;
+        }
+        if (corte < minimo) {
+          var espaco = janela.lastIndexOf(' ');
+          corte = espaco >= minimo ? espaco : MAX_PEDACO;
+        }
+        return inicio + corte;
+      }
+
       function dizerDaqui() {
-        var trecho = limpo.slice(posicao, posicao + 4000);
+        var fimDoTrecho = fimDoPedaco(posicao);
+        var trecho = limpo.slice(posicao, fimDoTrecho);
+        var ultimoPedaco = fimDoTrecho >= limpo.length;
         if (!trecho.trim()) { terminar(jaSaiuSom); return; }
+
+        /** Fecha este pedaco e emenda o proximo, ou encerra se era o ultimo. */
+        function proximoPedaco() {
+          if (ultimoPedaco) { terminar(jaSaiuSom); return; }
+          posicao = fimDoTrecho;
+          retomadas = 0;                 // cada pedaco tem sua propria cota de remendos
+          insistencias = 0;
+          limparRelogios();
+          setTimeout(function () { if (!terminou) dizerDaqui(); }, 40);
+        }
 
         var u = new SpeechSynthesisUtterance(trecho);
         Voice._vivo = u;                 // referencia viva: sem isso o GC mata a fala
@@ -424,8 +476,8 @@
           jaSaiuSom = true;
           comecouEm = Date.now();
           if (vigia) { clearTimeout(vigia); vigia = null; }
-          manterVivo();
-          adiarLimite(limpo.length - posicao);
+          manterVivo(trecho.length);
+          adiarLimite(trecho.length);
           // Um aviso de inicio por fala, mesmo que o primeiro trecho tenha sido
           // engolido: e ele que arma o detector de interrupcao la no app.
           if (aoEstado && !avisouInicio) { avisouInicio = true; aoEstado('started'); }
@@ -436,7 +488,7 @@
           teveBorda = true;
           var indice = evento && typeof evento.charIndex === 'number' ? evento.charIndex : 0;
           if (indice > avancou) avancou = indice;
-          adiarLimite(limpo.length - posicao - avancou);
+          adiarLimite(trecho.length - avancou);
         };
 
         u.onend = function () {
@@ -453,12 +505,12 @@
 
           // Terminou de verdade, ou faltou tao pouco que nao vale remendar.
           if (faltando <= 12 || retomadas >= MAX_RETOMADAS_FALA) {
-            terminar(jaSaiuSom);
+            proximoPedaco();
             return;
           }
           // Sem borda, so retoma quando o corte foi obvio (menos de 60% falado).
           if (!teveBorda && porTempo > trecho.length * 0.6) {
-            terminar(jaSaiuSom);
+            proximoPedaco();
             return;
           }
 
