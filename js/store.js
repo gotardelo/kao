@@ -277,8 +277,20 @@
         });
       });
     },
+    /**
+     * A chave AES deste aparelho. Uma so, para sempre.
+     *
+     * Ler-e-entao-criar e uma corrida: duas chamadas ao mesmo tempo — e o boot
+     * faz exatamente isso, carregando a chave do modelo e a da voz em paralelo —
+     * as duas veem o cofre vazio, as duas geram uma chave e a ultima a gravar
+     * apaga a outra. Tudo o que a primeira cifrou vira lixo ilegivel, que e a
+     * chave da API "sumindo sozinha". Memorizar a promessa resolve: existe uma
+     * criacao so, e todo mundo espera por ela.
+     */
+    _deviceKey: null,
     deviceKey: function () {
-      return Crypto._idb('readonly', function (s) { return s.get('device'); })
+      if (Crypto._deviceKey) return Crypto._deviceKey;
+      Crypto._deviceKey = Crypto._idb('readonly', function (s) { return s.get('device'); })
         .then(function (existing) {
           if (existing) return existing;
           return SUBTLE.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
@@ -287,6 +299,10 @@
                 .then(function () { return key; });
             });
         });
+      // IndexedDB fora do ar (aba anonima, armazenamento cheio): a proxima
+      // chamada tenta de novo em vez de herdar a promessa quebrada para sempre.
+      Crypto._deviceKey.catch(function () { Crypto._deviceKey = null; });
+      return Crypto._deviceKey;
     },
     encrypt: function (plain) {
       return Crypto.deviceKey().then(function (key) {
@@ -533,30 +549,67 @@
         write(K.apikey(uid_, provider), payload);
       });
     },
+    /**
+     * Grava a chave nos dois lugares, cada um por sua conta.
+     *
+     * Antes o cofre do servidor so era escrito se a cifra local tivesse dado
+     * certo. Bastava o IndexedDB falhar uma vez para a chave nao ficar em lugar
+     * nenhum — e a pessoa digitar tudo de novo no proximo reload.
+     */
     save: function (uid_, provider, plain) {
       if (arguments.length === 2) { plain = provider; provider = 'openai'; }
       if (!plain) {
         localStorage.removeItem(K.apikey(uid_, provider));
         return Sync.vaultClear(provider).catch(function () {});
       }
-      return ApiKey._saveLocal(uid_, provider, plain).then(function () {
-        Sync.vaultSave(provider, plain).catch(function () {});
+      var noCofre = Sync.vaultSave(provider, plain).catch(function (err) {
+        console.warn('[TDAHZEI] cofre do servidor indisponivel para ' + provider + '.', err);
       });
+      return ApiKey._saveLocal(uid_, provider, plain)
+        .catch(function (err) {
+          console.warn('[TDAHZEI] nao deu para cifrar a chave neste aparelho.', err);
+        })
+        .then(function () { return noCofre; })
+        .then(function () {});
     },
+    /**
+     * Le a chave. A copia local vem primeiro; se ela nao abrir, o cofre do
+     * servidor e a rede de seguranca.
+     *
+     * Esse "se ela nao abrir" e o ponto: antes, so a AUSENCIA de cifra local
+     * mandava perguntar ao servidor. Cifra presente e ilegivel — aparelho que
+     * perdeu a chave AES, navegador que limpou parte do armazenamento — voltava
+     * string vazia e o app se comportava como quem nunca teve chave, mesmo com
+     * a chave inteira guardada no cofre.
+     */
     load: function (uid_, provider) {
       provider = provider || 'openai';
       var payload = read(K.apikey(uid_, provider), null);
       if (!payload && provider === 'openai') payload = read(K.apikeyLegacy(uid_), null);
-      if (!payload) {
-        return Sync.vaultLoad(provider).then(function (plain) {
-          if (!plain) return '';
-          return ApiKey._saveLocal(uid_, provider, plain).then(function () { return plain; });
-        }).catch(function () { return ''; });
-      }
-      return Crypto.decrypt(payload).then(function (plain) {
-        if (plain) Sync.vaultSave(provider, plain).catch(function () {});
-        return plain;
+
+      var local = payload ? Crypto.decrypt(payload) : Promise.resolve('');
+      return local.catch(function () { return ''; }).then(function (plain) {
+        if (plain) {
+          Sync.vaultSave(provider, plain).catch(function () {});
+          return plain;
+        }
+        return ApiKey._doCofre(uid_, provider, !!payload);
       });
+    },
+
+    /** Puxa do cofre e recifra aqui, para o proximo load nao depender da rede. */
+    _doCofre: function (uid_, provider, tinhaCifraMorta) {
+      return Sync.vaultLoad(provider).then(function (plain) {
+        if (!plain) return '';
+        if (tinhaCifraMorta) {
+          // A cifra velha nao abre mais: guardada, so voltaria a atrapalhar.
+          localStorage.removeItem(K.apikey(uid_, provider));
+          if (provider === 'openai') localStorage.removeItem(K.apikeyLegacy(uid_));
+        }
+        return ApiKey._saveLocal(uid_, provider, plain)
+          .catch(function () {})
+          .then(function () { return plain; });
+      }).catch(function () { return ''; });
     },
     meta: function (uid_, provider) {
       provider = provider || 'openai';

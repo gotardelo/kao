@@ -9,7 +9,7 @@
    navegador com restrição), o worker instala do mesmo jeito e o app
    segue funcionando online.
    ============================================================ */
-const CACHE = 'tdahzei-v28';
+const CACHE = 'tdahzei-v29';
 const SHELL = [
   './',
   './index.html',

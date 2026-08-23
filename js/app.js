@@ -4828,6 +4828,12 @@
           talvezLigarAgenteSozinho();   // com chave na mão, ele já entra
         }
         btn.disabled = false;
+      }).catch(function (err) {
+        // Sem isto, uma falha ao gravar deixava o botão desligado para sempre
+        // e nenhuma explicação na tela.
+        out.className = 'test-result show bad';
+        out.textContent = 'Não deu para guardar a chave: ' + ((err && err.message) || 'erro desconhecido');
+        btn.disabled = false;
       });
     });
 

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.cjs",
-    "test": "node tests/ditado.test.cjs && node tests/fala.test.cjs",
+    "test": "node tests/ditado.test.cjs && node tests/fala.test.cjs && node tests/chave.test.cjs",
     "dev": "vinext dev --hostname 0.0.0.0 --port 5173",
     "build": "node scripts/prepare-sites-public.mjs && vinext build"
   },

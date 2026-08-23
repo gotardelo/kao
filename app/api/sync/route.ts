@@ -329,14 +329,27 @@ async function encryptVault(provider: string, userId: string, plain: string) {
   return { iv: bytesToB64(iv), ciphertext: bytesToB64(data) };
 }
 
+/**
+ * Devolve '' quando a linha nao abre, em vez de estourar.
+ *
+ * A linha fica ilegivel se KAO_VAULT_SECRET mudar entre um deploy e outro.
+ * Estourando, o /api/sync respondia erro e o navegador tratava como "sem
+ * chave" — sem nunca dizer o porque. Vazio deixa o app pedir a chave de novo
+ * com clareza, e a proxima gravacao substitui a linha morta.
+ */
 async function decryptVault(row: VaultRow, userId: string) {
   const { key, aad } = await vaultKey(row.provider, userId);
-  const plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: b64ToBytes(row.iv), additionalData: aad },
-    key,
-    b64ToBytes(row.ciphertext),
-  );
-  return new TextDecoder().decode(plain);
+  try {
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64ToBytes(row.iv), additionalData: aad },
+      key,
+      b64ToBytes(row.ciphertext),
+    );
+    return new TextDecoder().decode(plain);
+  } catch {
+    console.warn(`[kao] cofre ilegivel para ${row.provider}: KAO_VAULT_SECRET mudou?`);
+    return '';
+  }
 }
 
 async function handleSignup(request: Request, body: Record<string, unknown>) {
