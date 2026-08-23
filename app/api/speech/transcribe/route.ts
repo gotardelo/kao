@@ -1,11 +1,5 @@
+import { resolverChave } from '../chave';
 const ELEVENLABS_STT = 'https://api.elevenlabs.io/v1/speech-to-text';
-
-function apiKey(value: unknown) {
-  const key = String(value || '').trim();
-  if (key.length < 12) throw new Error('Cole uma chave valida da ElevenLabs para usar a voz natural.');
-  if (!/^sk_[a-zA-Z0-9_-]+$/.test(key)) throw new Error('A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.');
-  return key;
-}
 
 async function upstreamError(response: Response) {
   const body = await response.json().catch(() => ({})) as { detail?: { message?: string }; error?: { message?: string } };
@@ -19,7 +13,7 @@ async function upstreamError(response: Response) {
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const key = apiKey(form.get('apiKey'));
+    const key = resolverChave(form.get('apiKey'), 'para usar a voz natural');
     const audio = form.get('file');
     if (!(audio instanceof File) || !audio.size) throw new Error('Nao recebi um audio para transcrever.');
 

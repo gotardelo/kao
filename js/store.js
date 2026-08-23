@@ -541,11 +541,6 @@
       return ApiKey._saveLocal(uid_, provider, plain).then(function () {
         Sync.vaultSave(provider, plain).catch(function () {});
       });
-      return Crypto.encrypt(plain).then(function (payload) {
-        payload.hint = plain.slice(0, 12) + '…' + plain.slice(-4);
-        payload.savedAt = Date.now();
-        write(K.apikey(uid_, provider), payload);
-      });
     },
     load: function (uid_, provider) {
       provider = provider || 'openai';

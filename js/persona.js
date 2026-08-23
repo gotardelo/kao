@@ -270,6 +270,14 @@
   /* ============================================================
      VOZ — Web Speech API (nativa do navegador, custo zero)
      ============================================================ */
+  /** Margem generosa por letra: a fala real gasta ~70ms, o dobro cobre vozes lentas. */
+  var MS_POR_LETRA = 130;
+  /* Ritmo real de fala, usado so para estimar ate onde a voz chegou quando o
+     navegador nao manda evento de borda. Generoso de proposito: e melhor
+     achar que falou mais do que repetir palavra na cara da pessoa. */
+  var MS_POR_LETRA_FALADA = 58;
+  var MAX_RETOMADAS_FALA = 12;
+
   var Voice = {
     disponivel: function () { return typeof speechSynthesis !== 'undefined'; },
 
@@ -299,6 +307,19 @@
       setTimeout(handler, 1200);
     },
 
+    /** A voz configurada, ou a melhor voz de português disponível. */
+    escolher: function (cfg) {
+      cfg = cfg || {};
+      var vozes = Voice.listar();
+      if (cfg.uri) {
+        var achou = vozes.filter(function (v) { return v.voiceURI === cfg.uri; })[0];
+        if (achou) return achou;
+      }
+      return vozes.filter(function (v) {
+        return /pt[-_]?BR/i.test(v.lang) && /(natural|microsoft|google)/i.test(v.name);
+      })[0] || vozes.filter(function (v) { return /pt[-_]?BR/i.test(v.lang); })[0] || null;
+    },
+
     /** Tira markdown e emoji para a fala não ficar esquisita. */
     limpar: function (texto) {
       return String(texto || '')
@@ -311,71 +332,191 @@
         .trim();
     },
 
+    /**
+     * Fala um texto pela voz do navegador.
+     *
+     * O Chrome corta a fala sozinho de varios jeitos: engole o speak(), para
+     * perto dos 15s, e as vezes simplesmente encerra depois de uma palavra
+     * quando o motor do sistema tropeca. Nenhum desses avisa como erro — chega
+     * um "end" limpo, como se tivesse falado tudo. Por isso aqui a fala e
+     * acompanhada por dentro: guardamos ate onde a voz realmente chegou e, se
+     * o fim veio cedo demais, retomamos do ponto exato em vez de engolir o
+     * resto da frase.
+     */
     falar: function (texto, voz, aoTerminar, aoEstado) {
       if (!Voice.disponivel()) return false;
       var limpo = Voice.limpar(texto);
       if (!limpo) return false;
-      var u = new SpeechSynthesisUtterance(limpo.slice(0, 4000));
+
       var cfg = voz || {};
-      if (cfg.uri) {
-        var achou = Voice.listar().filter(function (v) { return v.voiceURI === cfg.uri; })[0];
-        if (achou) { u.voice = achou; u.lang = achou.lang; }
-      }
-      if (!u.voice) {
-        var nativa = Voice.listar().filter(function (v) {
-          return /pt[-_]?BR/i.test(v.lang) && /(natural|microsoft|google)/i.test(v.name);
-        })[0] || Voice.listar().filter(function (v) { return /pt[-_]?BR/i.test(v.lang); })[0];
-        if (nativa) { u.voice = nativa; u.lang = nativa.lang; }
-      }
-      if (!u.voice) u.lang = 'pt-BR';
-      u.rate = cfg.rate || 1;
-      u.pitch = typeof cfg.pitch === 'number' ? cfg.pitch : 1;
-      var iniciou = false;
+      var escolhida = Voice.escolher(cfg);
+      var taxa = cfg.rate || 1;
+      var tom = typeof cfg.pitch === 'number' ? cfg.pitch : 1;
+
       var terminou = false;
-      var vigia = null;
-      var limite = null;
+      var jaSaiuSom = false;
+      var posicao = 0;                 // ate onde a frase ja foi falada
+      var retomadas = 0;
+      var insistencias = 0;            // tentativas seguidas sem sair do lugar
+      var avisouInicio = false;
+      var vigia = null, limite = null, pulso = null;
+
+      function limparRelogios() {
+        if (vigia) { clearTimeout(vigia); vigia = null; }
+        if (limite) { clearTimeout(limite); limite = null; }
+        if (pulso) { clearInterval(pulso); pulso = null; }
+      }
 
       function terminar(saiuAudio) {
         if (terminou) return;
         terminou = true;
-        if (vigia) clearTimeout(vigia);
-        if (limite) clearTimeout(limite);
+        limparRelogios();
+        Voice._vivo = null;
         if (aoTerminar) aoTerminar(saiuAudio);
       }
 
-      u.onstart = function () {
-        iniciou = true;
-        if (vigia) clearTimeout(vigia);
-        if (aoEstado) aoEstado('started');
-      };
-      u.onend = function () { terminar(true); };
-      u.onerror = function (evento) {
-        if (aoEstado) aoEstado('error', (evento && evento.error) || 'synthesis-failed');
-        terminar(false);
-      };
-
-      try {
-        speechSynthesis.cancel();
-        speechSynthesis.resume();
-        speechSynthesis.speak(u);
-      } catch (e) {
-        return false;
+      /** O Chrome corta a fala perto dos 15s; pausar e retomar zera esse relogio. */
+      function manterVivo() {
+        if (pulso) clearInterval(pulso);
+        pulso = setInterval(function () {
+          if (terminou) { clearInterval(pulso); pulso = null; return; }
+          if (!speechSynthesis.speaking || speechSynthesis.paused) return;
+          try { speechSynthesis.pause(); speechSynthesis.resume(); } catch (_) {}
+        }, 9000);
       }
 
-      // Chrome can accept speak() without ever starting audible output.
-      vigia = setTimeout(function () {
-        if (!iniciou) {
+      /** Corta so depois de um tempo sem sinal de vida, nunca no meio de uma fala longa. */
+      function adiarLimite(restante) {
+        if (limite) clearTimeout(limite);
+        limite = setTimeout(function () {
+          if (terminou) return;
           try { speechSynthesis.cancel(); } catch (_) {}
-          if (aoEstado) aoEstado('error', 'speech-not-started');
+          terminar(jaSaiuSom);
+        }, Math.max(15000, Math.min(180000, restante * MS_POR_LETRA)));
+      }
+
+      /** Nao retoma no meio de uma palavra: volta ate o espaco anterior. */
+      function inicioDePalavra(indice) {
+        if (indice <= 0) return 0;
+        if (indice >= limpo.length) return limpo.length;
+        if (/\s/.test(limpo.charAt(indice - 1))) return indice;
+        var espaco = limpo.lastIndexOf(' ', indice);
+        return espaco > 0 ? espaco + 1 : indice;
+      }
+
+      function dizerDaqui() {
+        var trecho = limpo.slice(posicao, posicao + 4000);
+        if (!trecho.trim()) { terminar(jaSaiuSom); return; }
+
+        var u = new SpeechSynthesisUtterance(trecho);
+        Voice._vivo = u;                 // referencia viva: sem isso o GC mata a fala
+        if (escolhida) { u.voice = escolhida; u.lang = escolhida.lang; }
+        else u.lang = 'pt-BR';
+        u.rate = taxa;
+        u.pitch = tom;
+
+        var comecouEm = 0;
+        var avancou = 0;                 // maior charIndex visto neste trecho
+        var teveBorda = false;
+        var encerrado = false;
+
+        u.onstart = function () {
+          jaSaiuSom = true;
+          comecouEm = Date.now();
+          if (vigia) { clearTimeout(vigia); vigia = null; }
+          manterVivo();
+          adiarLimite(limpo.length - posicao);
+          // Um aviso de inicio por fala, mesmo que o primeiro trecho tenha sido
+          // engolido: e ele que arma o detector de interrupcao la no app.
+          if (aoEstado && !avisouInicio) { avisouInicio = true; aoEstado('started'); }
+        };
+
+        u.onboundary = function (evento) {
+          if (terminou) return;
+          teveBorda = true;
+          var indice = evento && typeof evento.charIndex === 'number' ? evento.charIndex : 0;
+          if (indice > avancou) avancou = indice;
+          adiarLimite(limpo.length - posicao - avancou);
+        };
+
+        u.onend = function () {
+          if (encerrado || terminou) return;
+          encerrado = true;
+
+          /* Quanto do trecho realmente saiu. A borda e a medida boa; sem ela
+             sobra o relogio, que so serve para detectar um corte grosseiro. */
+          var porTempo = comecouEm
+            ? Math.floor(((Date.now() - comecouEm) * taxa) / MS_POR_LETRA_FALADA)
+            : 0;
+          var lido = teveBorda ? avancou : porTempo;
+          var faltando = trecho.length - lido;
+
+          // Terminou de verdade, ou faltou tao pouco que nao vale remendar.
+          if (faltando <= 12 || retomadas >= MAX_RETOMADAS_FALA) {
+            terminar(jaSaiuSom);
+            return;
+          }
+          // Sem borda, so retoma quando o corte foi obvio (menos de 60% falado).
+          if (!teveBorda && porTempo > trecho.length * 0.6) {
+            terminar(jaSaiuSom);
+            return;
+          }
+
+          var proximo = inicioDePalavra(posicao + Math.max(lido, 0));
+          if (proximo <= posicao) {
+            /* Nao andou nada: o motor engoliu o trecho inteiro. Vale insistir
+               do mesmo ponto — repetir e melhor do que ficar mudo — mas com
+               limite curto, senao isso vira laco. */
+            if (insistencias >= 2) { terminar(jaSaiuSom); return; }
+            insistencias++;
+          } else {
+            insistencias = 0;
+            posicao = proximo;
+          }
+          retomadas++;
+          limparRelogios();
+          setTimeout(function () { if (!terminou) dizerDaqui(); }, 60);
+        };
+
+        u.onerror = function (evento) {
+          if (encerrado || terminou) return;
+          encerrado = true;
+          var causa = (evento && evento.error) || 'synthesis-failed';
+          // Corte pedido por nos (barge-in, calar, proxima fala) nao e defeito.
+          if (causa === 'interrupted' || causa === 'canceled') { terminar(jaSaiuSom); return; }
+          if (aoEstado) aoEstado('error', causa);
           terminar(false);
+        };
+
+        function emitir() {
+          try {
+            speechSynthesis.resume();
+            speechSynthesis.speak(u);
+          } catch (e) {
+            terminar(jaSaiuSom);
+            return;
+          }
+          // O Chrome aceita speak() sem nunca comecar a sair som.
+          vigia = setTimeout(function () {
+            if (comecouEm || terminou || encerrado) return;
+            encerrado = true;
+            try { speechSynthesis.cancel(); } catch (_) {}
+            if (aoEstado && !jaSaiuSom) aoEstado('error', 'speech-not-started');
+            terminar(jaSaiuSom);
+          }, 3500);
         }
-      }, 2400);
-      limite = setTimeout(function () {
-        if (!terminou) {
+
+        var ocupado = false;
+        try { ocupado = !!(speechSynthesis.speaking || speechSynthesis.pending); } catch (_) {}
+        if (!ocupado || posicao > 0) {
+          emitir();                      // sem cancel antes: preserva o gesto do usuario
+        } else {
           try { speechSynthesis.cancel(); } catch (_) {}
-          terminar(!!iniciou);
+          setTimeout(emitir, 90);        // o Chrome engole speak() logo apos cancel()
         }
-      }, Math.max(8000, Math.min(45000, limpo.length * 95)));
+      }
+
+      dizerDaqui();
       return true;
     },
 
@@ -428,7 +569,10 @@
       function encerrar() {
         if (encerrado) return;
         encerrado = true;
-        Ditado._rec = null;
+        // So solta o lugar se ainda for ESTE reconhecedor: o onend do anterior
+        // chega depois do proximo comecar, e limpar as cegas fazia o app achar
+        // que ninguem estava ouvindo enquanto um microfone seguia aberto.
+        if (Ditado._rec === rec) Ditado._rec = null;
         try {
           rec.onresult = rec.onend = rec.onerror = null;
           rec.onstart = rec.onspeechstart = rec.onspeechend = null;
@@ -458,7 +602,7 @@
 
       // start() lança de verdade em alguns estados; sem isso o botão trava.
       try { rec.start(); }
-      catch (e) { Ditado._rec = null; return false; }
+      catch (e) { return false; }
 
       Ditado._rec = rec;
       return true;

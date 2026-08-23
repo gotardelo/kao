@@ -49,12 +49,12 @@ O PDF era Mac-first (`brew`, `say`, `launchd`). No Windows, o equivalente aplica
 ## Como rodar
 
 ```bash
-node server.js
+node server.cjs
 ```
 
 Abra <http://localhost:5173>.
 
-> **O `server.js` é obrigatório**, não é só um servidor de arquivos. Ele faz o proxy
+> **O `server.cjs` é obrigatório**, não é só um servidor de arquivos. Ele faz o proxy
 > das chamadas para a OpenAI (`/api/openai/…`) — sem ele a conversa e a voz não funcionam.
 > Um `python -m http.server` serve as telas, mas nada responde.
 
@@ -183,7 +183,7 @@ Enquanto conversam, ele continua chamando as 12 ferramentas: dizer *"gastei 40 n
 em voz alta registra o gasto na hora. O que é falado vira mensagem na **mesma conversa** do
 chat escrito — a voz não é um modo à parte, alimenta o mesmo histórico e a mesma memória.
 
-Por baixo: o `server.js` troca sua chave `sk-` por uma chave efêmera `ek-` (válida por
+Por baixo: o `server.cjs` troca sua chave `sk-` por uma chave efêmera `ek-` (válida por
 10 minutos), o navegador abre um WebRTC com o microfone, e os eventos trafegam num canal de
 dados. A chave permanente nunca sai do seu computador.
 
@@ -219,18 +219,18 @@ funciona com o agente ligado — o microfone já está em uso.
 
 ## Usar no celular
 
-O `server.js` mostra um endereço `http://192.168.x.x:5173` para a mesma rede Wi-Fi — funciona
+O `server.cjs` mostra um endereço `http://192.168.x.x:5173` para a mesma rede Wi-Fi — funciona
 para dar uma olhada, **mas em HTTP puro o navegador desliga a WebCrypto e o microfone**, então
 login, cadastro e voz não funcionam fora de `localhost`.
 
 Como o app agora depende do proxy em `/api/openai/…`, **host estático puro não serve mais**.
-Para uso real no celular você precisa de um lugar que rode o `server.js` com HTTPS:
+Para uso real no celular você precisa de um lugar que rode o `server.cjs` com HTTPS:
 
 | Onde | Como |
 |---|---|
 | **Túnel para a sua máquina** | `npx localtunnel --port 5173` ou `cloudflared tunnel --url http://localhost:5173` |
-| **Fly.io / Render / Railway** | suba a pasta; o comando é `node server.js` e a porta vem de `PORT` |
-| **Um VPS qualquer** | `node server.js 5173` atrás de um nginx com TLS |
+| **Fly.io / Render / Railway** | suba a pasta; o comando é `node server.cjs` e a porta vem de `PORT` |
+| **Um VPS qualquer** | `node server.cjs 5173` atrás de um nginx com TLS |
 
 Com HTTPS no ar, abra no celular e use "Adicionar à tela de início" — ele abre em tela cheia,
 sem barra de navegador, com ícone próprio.
@@ -281,7 +281,7 @@ js/markdown.js      markdown → HTML com escape
 js/app.js           navegação, chat, painel, configurações
 sw.js               service worker (cache da casca do app)
 manifest.json       instalação como app
-server.js           servidor local + proxy da OpenAI (obrigatório)
+server.cjs           servidor local + proxy da OpenAI (obrigatório)
 __test.html         46 testes de lógica, criptografia e formato da requisição
 __tooltest.html     123 testes de memória, finanças, teto, ferramentas e avatar
 __uitest.html       67 testes de interface ponta-a-ponta
@@ -300,7 +300,7 @@ __avatar_preview.html  galeria do boneco em todas as variações (só para olhar
 - A chave da API é criptografada com AES-GCM. A chave de criptografia é gerada como
   **não-exportável** e vive no IndexedDB: nem pelo console dá para extrair o valor bruto dela.
 - O que o modelo responde é escapado antes de virar HTML — não há como uma resposta injetar script.
-- Nada é enviado para nenhum servidor além do `server.js` que roda na sua máquina, e de lá
+- Nada é enviado para nenhum servidor além do `server.cjs` que roda na sua máquina, e de lá
   para a `api.openai.com`.
 
 **Não protegido (e é bom você saber):**
@@ -309,13 +309,13 @@ __avatar_preview.html  galeria do boneco em todas as variações (só para olhar
   *Exportar conversas* para fazer backup.
 - **O login é local.** Não existe servidor validando nada: quem tiver acesso ao seu navegador
   desbloqueado tem acesso ao app. É uma tranca de porta, não um cofre de banco.
-- **A chave da API fica no dispositivo** e passa pelo `server.js` local a cada mensagem —
+- **A chave da API fica no dispositivo** e passa pelo `server.cjs` local a cada mensagem —
   ele não guarda nada, só repassa. Perfeito para a *sua* chave no *seu* aparelho; inadequado
   para uma chave compartilhada entre várias pessoas.
-- **Se você expor o `server.js` na internet, o proxy fica aberto.** Ele aceita a chave que
+- **Se você expor o `server.cjs` na internet, o proxy fica aberto.** Ele aceita a chave que
   vier no corpo da requisição e não tem autenticação própria. Use túnel privado, não um IP público.
 
-Se um dia isso virar multiusuário de verdade, o caminho é o `server.js` guardar a chave e
+Se um dia isso virar multiusuário de verdade, o caminho é o `server.cjs` guardar a chave e
 exigir login antes de repassar. O `js/store.js` e o `js/auth.js` foram escritos isolados
 justamente para essa troca ser localizada.
 

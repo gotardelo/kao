@@ -1,11 +1,5 @@
+import { resolverChave } from '../chave';
 const ELEVENLABS_TOKEN = 'https://api.elevenlabs.io/v1/single-use-token/realtime_scribe';
-
-function apiKey(value: unknown) {
-  const key = String(value || '').trim();
-  if (key.length < 12) throw new Error('Cole uma chave valida da ElevenLabs para usar a voz natural.');
-  if (!/^sk_[a-zA-Z0-9_-]+$/.test(key)) throw new Error('A chave da ElevenLabs precisa comecar com sk_. Voce colou o ID da chave, nao a chave real.');
-  return key;
-}
 
 async function upstreamError(response: Response) {
   const body = await response.json().catch(() => ({})) as { detail?: { message?: string }; error?: { message?: string } };
@@ -22,7 +16,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const upstream = await fetch(ELEVENLABS_TOKEN, {
       method: 'POST',
-      headers: { 'xi-api-key': apiKey(body.apiKey) },
+      headers: { 'xi-api-key': resolverChave(body.apiKey, 'para usar a voz natural') },
       signal: request.signal,
     });
     if (!upstream.ok) return Response.json({ error: { message: await upstreamError(upstream) } }, { status: upstream.status });
